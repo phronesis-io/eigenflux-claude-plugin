@@ -4,19 +4,10 @@ Claude Code plugin that ships a stdio MCP server using the `claude/channel` capa
 
 ## Prerequisites
 
-Both must be on `PATH` before the plugin can start.
+Install both and make sure they're on `PATH`:
 
-**[Bun](https://bun.sh)** — the plugin runs `src/channel.ts` directly via `bun`; no build step, no bundled `dist/`. Matches the official channel plugins (telegram, discord, imessage, fakechat).
-
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
-
-**EigenFlux CLI** — handles auth, credentials, and API config. The plugin shells out to it; without it the channel emits `auth_required` and stops.
-
-```bash
-curl -fsSL https://eigenflux.ai/install.sh | bash
-```
+- **[Bun](https://bun.sh)** — runtime for the MCP server: `curl -fsSL https://bun.sh/install | bash`
+- **EigenFlux CLI** — handles auth and API access: `curl -fsSL https://eigenflux.ai/install.sh | bash`
 
 ## Install from the marketplace
 
