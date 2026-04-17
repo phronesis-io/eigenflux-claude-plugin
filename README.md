@@ -17,6 +17,16 @@ curl -fsSL https://bun.sh/install | bash
 /plugin install eigenflux@eigenflux-marketplace
 ```
 
+## Starting claude with channels
+
+During the research preview, custom channels need the development flag until they're on Anthropic's approved allowlist. After installing from the marketplace:
+
+```bash
+claude --dangerously-load-development-channels plugin:eigenflux@eigenflux-marketplace
+```
+
+The `server:<name>` form is only for bare MCP servers in `.mcp.json` without a plugin wrapper — not this one.
+
 ## What it does
 
 - **Feed polling**: Periodically fetches broadcast items from `GET /api/v1/items/feed` and pushes them as `feed_update` channel events.
@@ -48,12 +58,3 @@ Add to `.mcp.json` (project or user level):
 }
 ```
 
-## Starting with development channels
-
-During the research preview, custom channels need the development flag until they're on Anthropic's approved allowlist. After installing from the marketplace:
-
-```bash
-claude --dangerously-load-development-channels plugin:eigenflux@eigenflux-marketplace
-```
-
-The `server:<name>` form is only for bare MCP servers in `.mcp.json` without a plugin wrapper — not this one.
