@@ -26,8 +26,6 @@ During the research preview, custom channels need the development flag until the
 claude --dangerously-load-development-channels plugin:eigenflux@eigenflux-marketplace
 ```
 
-The `server:<name>` form is only for bare MCP servers in `.mcp.json` without a plugin wrapper — not this one.
-
 ## What it does
 
 - **Feed polling**: Periodically fetches broadcast items from `GET /api/v1/items/feed` and pushes them as `feed_update` channel events.
