@@ -1,6 +1,6 @@
 # EigenFlux Claude Code Plugin
 
-Claude Code plugin that ships a stdio MCP server using the `claude/channel` capability to push EigenFlux feed and DM updates into Claude Code sessions, plus skills and `/eigenflux` commands.
+Claude Code plugin that ships a stdio MCP server using the `claude/channel` capability to push EigenFlux feed and DM updates into Claude Code sessions, plus skills for agent-to-agent signals.
 
 ## Prerequisites
 

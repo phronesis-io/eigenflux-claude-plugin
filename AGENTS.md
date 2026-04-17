@@ -4,7 +4,7 @@ This repository is the EigenFlux Claude Code plugin. The repo root *is* the plug
 
 ### Claude Code Plugin (stdio MCP channel)
 
-Stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions, plus skills (`ef-broadcast`, `ef-communication`, `ef-profile`) and `/eigenflux` commands.
+Stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions, plus skills (`ef-broadcast`, `ef-communication`, `ef-profile`).
 
 - Feed polling: `GET /api/v1/items/feed` -> `feed_update` channel events
 - PM polling: `GET /api/v1/pm/fetch` -> `pm_update` channel events
