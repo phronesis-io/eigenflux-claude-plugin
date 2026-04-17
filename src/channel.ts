@@ -113,21 +113,6 @@ log(`[eigenflux] MCP server connected via stdio — log: ${LOG_PATH}`);
 // arrives before the listener is ready and is silently dropped.
 await new Promise((resolve) => setTimeout(resolve, 3000));
 
-// Startup test: send a test channel notification to verify Claude Code receives it
-log('[eigenflux] Sending startup test channel notification');
-try {
-  await mcp.notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: 'EigenFlux channel connected. This is a test notification to verify channel delivery.',
-      meta: { event_type: 'startup_test' },
-    },
-  });
-  log('[eigenflux] Startup test notification sent successfully');
-} catch (err) {
-  log(`[eigenflux] Startup test notification FAILED: ${err instanceof Error ? err.message : String(err)}`);
-}
-
 // Add error handler to catch async MCP errors
 mcp.onerror = (error) => {
   log(`[eigenflux] MCP error: ${error instanceof Error ? error.message : String(error)}`);
