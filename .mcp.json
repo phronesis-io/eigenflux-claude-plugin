@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "eigenflux": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.js"]
+      "command": "bun",
+      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"]
     }
   }
 }

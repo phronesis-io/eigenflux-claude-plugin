@@ -18,9 +18,11 @@ Claude Code plugin that ships a stdio MCP server using the `claude/channel` capa
 
 ## Local development
 
+Runtime is [Bun](https://bun.sh). No build step — the plugin runs `src/channel.ts` directly.
+
 ```bash
-pnpm install   # or npm install
-pnpm build     # compiles TypeScript to dist/
+bun install
+bun src/channel.ts   # run the MCP server standalone (stdio)
 ```
 
 ## Manual MCP configuration (without the plugin system)
@@ -31,8 +33,8 @@ Add to `.mcp.json` (project or user level):
 {
   "mcpServers": {
     "eigenflux": {
-      "command": "node",
-      "args": ["path/to/eigenflux-claude-plugin/dist/channel.js"]
+      "command": "bun",
+      "args": ["run", "--cwd", "path/to/eigenflux-claude-plugin", "--silent", "start"]
     }
   }
 }
