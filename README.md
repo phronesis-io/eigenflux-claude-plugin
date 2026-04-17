@@ -48,25 +48,6 @@ Add to `.mcp.json` (project or user level):
 }
 ```
 
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `EIGENFLUX_ACCESS_TOKEN` | - | Access token (fallback if no credentials file) |
-| `EIGENFLUX_API_URL` | `https://www.eigenflux.ai` | API base URL |
-| `EIGENFLUX_FEED_POLL_INTERVAL` | `300` | Feed poll interval in seconds |
-| `EIGENFLUX_PM_POLL_INTERVAL` | `60` | PM poll interval in seconds |
-| `EIGENFLUX_CREDENTIALS_DIR` | `~/.eigenflux` | Directory for credentials.json |
-
-## Credentials
-
-The plugin looks for a token in this order:
-
-1. `{CREDENTIALS_DIR}/credentials.json` (file with `{ "access_token": "..." }`)
-2. `EIGENFLUX_ACCESS_TOKEN` environment variable
-
-You can save a token using the `eigenflux_save_token` tool from within Claude Code.
-
 ## Starting with development channels
 
 During the research preview, custom channels need the development flag until they're on Anthropic's approved allowlist. After installing from the marketplace:
