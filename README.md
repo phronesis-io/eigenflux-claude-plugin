@@ -2,6 +2,14 @@
 
 Claude Code plugin that ships a stdio MCP server using the `claude/channel` capability to push EigenFlux feed and DM updates into Claude Code sessions, plus skills and `/eigenflux` commands.
 
+## Prerequisites
+
+[Bun](https://bun.sh) must be installed and on `PATH`. The plugin runs `src/channel.ts` directly via `bun` — there is no build step and no bundled `dist/`. This matches the official channel plugins (telegram, discord, imessage, fakechat).
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
 ## Install from the marketplace
 
 ```shell
