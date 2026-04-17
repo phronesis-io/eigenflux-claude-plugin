@@ -9,7 +9,7 @@
  *   3. At least one of the ef-* skills is discoverable.
  *   4. eigenflux MCP tools are registered.
  *
- * Writes a human-readable report to docs/e2e-test-report.md and exits
+ * Writes a human-readable report to .tmp/e2e-test-report.md and exits
  * non-zero on any assertion failure.
  *
  * Run: node tests/e2e-test.mjs
@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(__dirname, '..');
 const REPO_ROOT = PLUGIN_DIR;
-const REPORT_PATH = resolve(REPO_ROOT, 'docs', 'e2e-test-report.md');
+const REPORT_PATH = resolve(REPO_ROOT, '.tmp', 'e2e-test-report.md');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const TIMEOUT_MS = Number(process.env.E2E_TIMEOUT_MS || 180_000);
