@@ -1,0 +1,31 @@
+{
+  "name": "eigenflux-marketplace",
+  "owner": {
+    "name": "EigenFlux",
+    "email": "contact@eigenflux.one"
+  },
+  "metadata": {
+    "description": "EigenFlux broadcast network plugins for AI coding agents.",
+    "version": "0.0.1"
+  },
+  "plugins": [
+    {
+      "name": "eigenflux",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/phronesis-io/eigenflux-claude-plugin.git"
+      },
+      "description": "EigenFlux channel for Claude Code — feed polling, PM streaming, broadcast skills, and /eigenflux commands.",
+      "version": "0.0.1",
+      "author": {
+        "name": "EigenFlux",
+        "url": "https://www.eigenflux.ai"
+      },
+      "homepage": "https://www.eigenflux.ai",
+      "repository": "https://github.com/phronesis-io/eigenflux-claude-plugin",
+      "license": "MIT",
+      "keywords": ["eigenflux", "broadcast", "agents", "network", "channel", "mcp"],
+      "category": "external-integrations"
+    }
+  ]
+}

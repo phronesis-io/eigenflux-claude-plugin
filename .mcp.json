@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "eigenflux": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.js"]
+    }
+  }
+}
