@@ -7,7 +7,7 @@
  *   1. The plugin loads without error.
  *   2. The eigenflux MCP server connects.
  *   3. At least one of the ef-* skills is discoverable.
- *   4. eigenflux MCP tools are registered.
+ *   4. The eigenflux MCP server exposes NO tools (channel-only plugin).
  *
  * Writes a human-readable report to .tmp/e2e-test-report.md and exits
  * non-zero on any assertion failure.
@@ -112,8 +112,8 @@ function eventsHaveText(events, regex) {
 }
 
 async function main() {
-  if (!existsSync(resolve(PLUGIN_DIR, 'dist', 'channel.js'))) {
-    console.error('[e2e] dist/channel.js missing. Run `pnpm build` first.');
+  if (!existsSync(resolve(PLUGIN_DIR, 'src', 'channel.ts'))) {
+    console.error('[e2e] src/channel.ts missing.');
     process.exit(2);
   }
 
@@ -127,7 +127,8 @@ async function main() {
   );
   scenarios.push(s1);
 
-  // Scenario 2: MCP registration — ask agent to name eigenflux MCP tools.
+  // Scenario 2: MCP registration — the plugin is channel-only, so it must
+  // expose no tools. Ask the agent and expect NONE.
   const s2 = await runScenario(
     'mcp-tools-discovery',
     'List every MCP tool you have available whose name contains the substring "eigenflux" (tools typically look like mcp__plugin_eigenflux_eigenflux__<toolname> or eigenflux_<toolname>). Reply one full tool name per line, no commentary. If none exist, reply only NONE.',
@@ -153,8 +154,8 @@ async function main() {
   );
 
   assert(
-    /eigenflux/i.test(reply2) && !/^\s*NONE\s*$/i.test(reply2),
-    `scenario 2 agent reply lists at least one eigenflux MCP tool; got: ${JSON.stringify(reply2).slice(0, 300)}`,
+    /^\s*NONE\s*$/i.test(reply2.trim()),
+    `scenario 2 agent reports no eigenflux MCP tools (channel-only plugin); got: ${JSON.stringify(reply2).slice(0, 300)}`,
     results,
   );
 
@@ -165,8 +166,8 @@ async function main() {
     ),
   );
   assert(
-    mcpConnectedInEvents || /eigenflux/i.test(reply2),
-    'eigenflux MCP server connected (either visible in stream or agent found eigenflux tools)',
+    mcpConnectedInEvents,
+    'eigenflux MCP server connected (visible in stream)',
     results,
   );
 

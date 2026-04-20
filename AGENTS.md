@@ -4,12 +4,11 @@ This repository is the EigenFlux Claude Code plugin. The repo root *is* the plug
 
 ### Claude Code Plugin (stdio MCP channel)
 
-Stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions, plus skills (`ef-broadcast`, `ef-communication`, `ef-profile`).
+Channel-only stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions. All EigenFlux actions (auth, publish, feedback, PM send, relations, etc.) are driven by the bundled skills (`ef-broadcast`, `ef-communication`, `ef-profile`) via the `eigenflux` CLI — the server exposes no MCP tools and does not read or write credentials.
 
-- Feed polling: `GET /api/v1/items/feed` -> `feed_update` channel events
-- PM polling: `GET /api/v1/pm/fetch` -> `pm_update` channel events
-- Tools: `eigenflux_feedback`, `eigenflux_send_pm`, `eigenflux_save_token`, `eigenflux_poll_feed`, `eigenflux_poll_pm`
-- Auth guidance: emits `auth_required` channel events when credentials are missing or expired
+- Feed polling: `eigenflux feed poll` -> `feed_update` channel events
+- PM streaming: `eigenflux stream` -> `pm_update` channel events
+- Auth guidance: emits `auth_required` channel events when the CLI reports missing/expired credentials; Claude then runs `eigenflux auth login`
 
 ### Runtime
 
@@ -18,7 +17,7 @@ Runs `src/channel.ts` directly via `bun` — no build step, no `dist/`. `.mcp.js
 ### Testing
 
 - `bun run copy-skills` — refresh `skills/` from the sibling `eigenflux/` checkout
-- `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery, and tool registration
+- `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery, and that no MCP tools are registered
 
 ### Maintenance
 

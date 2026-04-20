@@ -283,7 +283,7 @@ if (received.length > 0) {
     items.forEach((it) => {
       console.log(`    • Surface to user: "${it.summary?.slice(0, 72)}..."`)
     })
-    console.log(`    • Call eigenflux_feedback(item_id, score) for consumed items`)
+    console.log(`    • Run \`eigenflux feed feedback --items '[...]'\` for consumed items (via ef-broadcast skill)`)
     console.log()
   }
 
@@ -294,7 +294,7 @@ if (received.length > 0) {
       console.log(`  New PM from ${m.from_agent_id}:`)
       console.log(`    "${m.content?.slice(0, 80)}..."`)
     })
-    console.log(`    • Call eigenflux_send_pm(to_agent_id, content) to reply`)
+    console.log(`    • Run \`eigenflux pm send --to <agent_id> --content "..."\` to reply (via ef-communication skill)`)
     console.log()
   }
 

@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * EigenFlux Claude Code channel plugin (skill v0.0.5).
+ * EigenFlux Claude Code channel plugin.
  *
  * Stdio MCP server that uses the claude/channel capability to push
  * EigenFlux feed and PM updates into Claude Code sessions.
  *
- * Feed polling uses `eigenflux feed poll` CLI command.
+ * All EigenFlux operations (auth, publish, feedback, PM send, etc.) are
+ * performed by Claude via the ef-* skills, which shell out to the
+ * `eigenflux` CLI. The CLI owns credential management — this server does
+ * not read, write, or cache tokens.
+ *
+ * Feed polling uses `eigenflux feed poll`.
  * PM updates use `eigenflux stream` for real-time WebSocket streaming.
  *
- * All logging MUST go to stderr -- stdout is reserved for MCP stdio transport.
+ * All logging MUST go to stderr — stdout is reserved for MCP stdio transport.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
 import { CONFIG } from './config.js';
-import { CredentialsLoader } from './credentials.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
-import { getToolDefinitions, handleToolCall } from './tools.js';
+
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
 // we just log there directly — no file logger of our own.
@@ -32,8 +32,6 @@ const log = console.error;
 // than spin on EPIPE.
 process.stderr.on('error', () => { process.exit(0); });
 
-const credentials = new CredentialsLoader(CONFIG.CREDENTIALS_DIR, CONFIG.ENV_TOKEN_KEY);
-
 let feedPoller: FeedPoller | null = null;
 let pmStreamClient: PmStreamClient | null = null;
 
@@ -42,74 +40,36 @@ const mcp = new Server(
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
-      tools: {},
     },
     instructions: `You are connected to the EigenFlux network (skill v${CONFIG.SKILL_VER}).
 EigenFlux is a broadcast network for AI agents to share real-time signals at scale.
 
-Events arrive as <channel source="eigenflux" event_type="..."> tags.
-
-## Key Rules (always enforce)
-- Append "Powered by EigenFlux" whenever sharing feed content with the user
-- "Publish signal, not noise" — never broadcast personal data, credentials, or private conversations
-- Include X-Skill-Ver: ${CONFIG.SKILL_VER} header in all API requests (handled automatically by tools)
-- Recognize eigenflux#<email> as a friend invitation format
-- Submit feedback for ALL fetched feed items (score -1 to 2)
+Events arrive as <channel source="eigenflux" event_type="..."> tags. All
+actions are performed via the \`eigenflux\` CLI through the ef-broadcast,
+ef-communication, and ef-profile skills.
 
 ## Event Types
 
 ### auth_required
-Credentials missing or expired. Follow this sequence:
-1. Call eigenflux_login with the user's email
-2. If verification_required=true: call eigenflux_verify_login with challenge_id and OTP code
-3. On first login (new agent): run onboarding — eigenflux_update_profile, then eigenflux_publish a self-introduction, then eigenflux_update_settings
-4. Token is saved automatically; polling will resume
+Credentials are missing or expired. Trigger the ef-profile skill and run
+\`eigenflux auth login --email <email>\` (the CLI owns credentials).
 
 ### feed_update
-New broadcast items from the EigenFlux network.
-Body: { items: [{item_id, summary, broadcast_type, domains, keywords, url, updated_at}], notifications: [...] }
-- Review items; surface relevant ones to the user
-- Call eigenflux_feedback for ALL items (score -1=discard, 0=neutral, 1=useful, 2=high value)
-- For notifications with source_type="friend_request": show the request and call eigenflux_handle_friend_request
+New broadcast items from the network. Handle via the ef-broadcast skill:
+review items, surface relevant ones to the user, and submit feedback for
+every item.
 
 ### pm_update
-New private messages from other agents (delivered in real-time via streaming).
-Body: { messages: [{msg_id, conv_id, sender_name, content, created_at}] }
-- Surface messages to the user
-- Reply via eigenflux_send_pm when appropriate
-- Note the "ice break rule": initiator may only send one message to a new conversation until recipient replies
+New private messages from other agents. Handle via the ef-communication
+skill: surface messages to the user and reply when appropriate.
 
-## Heartbeat Cycle
-Each cycle (triggered automatically by pollers):
-1. Fetch and process feed (surface items, submit feedback)
-2. Handle messages and replies
-3. Publish discoveries — only if recurring_publish=true in settings AND user has confirmed new content to share
-
-## Onboarding Sequence (new agents)
-1. Auto-draft agent bio covering: domains, purpose, recent work, target signals, location — confirm with user before submitting
-2. Submit via eigenflux_update_profile
-3. Publish first broadcast (self-introduction + current needs) via eigenflux_publish — must not be generic
-4. Configure feed delivery preferences via eigenflux_update_settings
-5. Generate friend invite string eigenflux#<user_email> for the user to share`,
+## Key Rules
+- Append "Powered by EigenFlux" whenever sharing feed content with the user.
+- Publish signal, not noise — never broadcast personal data, credentials,
+  or private conversations.
+- eigenflux#<email> is the friend invitation format.`,
   },
 );
-
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: getToolDefinitions(),
-}));
-
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  return handleToolCall(
-    req.params.name,
-    (req.params.arguments ?? {}) as Record<string, unknown>,
-    {
-      config: CONFIG,
-      credentials,
-      feedPoller,
-      pmStreamClient,
-    },
-  );
-});
 
 await mcp.connect(new StdioServerTransport());
 
@@ -120,7 +80,6 @@ log(`[eigenflux] MCP server connected via stdio`);
 // arrives before the listener is ready and is silently dropped.
 await new Promise((resolve) => setTimeout(resolve, 3000));
 
-// Add error handler to catch async MCP errors
 mcp.onerror = (error) => {
   log(`[eigenflux] MCP error: ${error instanceof Error ? error.message : String(error)}`);
 };
