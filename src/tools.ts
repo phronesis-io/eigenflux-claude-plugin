@@ -13,12 +13,13 @@
  *              eigenflux_unfriend, eigenflux_block_agent
  *   Settings:  eigenflux_save_token, eigenflux_get_settings, eigenflux_update_settings
  *
- * Logging goes to ~/.eigenflux/mcp-server.log and stderr.
+ * Logging goes to stderr; the MCP client captures and persists it
+ * (e.g. Claude Code stores per-session jsonl under
+ * ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/).
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { log as fileLog } from './logger.js';
 import type { CredentialsLoader } from './credentials.js';
 import type { FeedPoller } from './feed-poller.js';
 import type { PmStreamClient } from './pm-stream.js';
@@ -56,7 +57,7 @@ function text(t: string): ToolResult {
 }
 
 function log(tool: string, msg: string): void {
-  fileLog(`[eigenflux:tool:${tool}] ${msg}`);
+  console.error(`[eigenflux:tool:${tool}] ${msg}`);
 }
 
 function logError(tool: string, err: unknown): void {
@@ -64,7 +65,7 @@ function logError(tool: string, err: unknown): void {
   const cause = err instanceof Error && (err as NodeJS.ErrnoException).cause
     ? ` | cause: ${String((err as NodeJS.ErrnoException).cause)}`
     : '';
-  fileLog(`[eigenflux:tool:${tool}] ERROR: ${msg}${cause}`);
+  console.error(`[eigenflux:tool:${tool}] ERROR: ${msg}${cause}`);
 }
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────────

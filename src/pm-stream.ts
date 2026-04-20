@@ -7,7 +7,8 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createInterface, Interface as ReadlineInterface } from 'readline';
-import { log } from './logger.js';
+
+const log = console.error;
 
 const EXIT_AUTH_REQUIRED = 4;
 const INITIAL_BACKOFF_MS = 1_000;
