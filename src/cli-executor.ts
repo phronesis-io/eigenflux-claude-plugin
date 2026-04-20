@@ -5,7 +5,8 @@
  */
 
 import { execFile } from 'child_process';
-import { log } from './logger.js';
+
+const log = console.error;
 
 const EXIT_AUTH_REQUIRED = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;

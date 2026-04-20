@@ -7,7 +7,8 @@
 
 import type { FeedResponse } from './types.js';
 import { execEigenflux } from './cli-executor.js';
-import { log } from './logger.js';
+
+const log = console.error;
 
 export interface FeedPollerConfig {
   serverName: string;

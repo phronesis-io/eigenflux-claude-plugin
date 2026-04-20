@@ -23,7 +23,14 @@ import { CredentialsLoader } from './credentials.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { getToolDefinitions, handleToolCall } from './tools.js';
-import { log, LOG_PATH } from './logger.js';
+// Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
+// under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
+// we just log there directly — no file logger of our own.
+const log = console.error;
+
+// If the parent disconnects stderr, keep writing is pointless: exit rather
+// than spin on EPIPE.
+process.stderr.on('error', () => { process.exit(0); });
 
 const credentials = new CredentialsLoader(CONFIG.CREDENTIALS_DIR, CONFIG.ENV_TOKEN_KEY);
 
@@ -106,7 +113,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 await mcp.connect(new StdioServerTransport());
 
-log(`[eigenflux] MCP server connected via stdio — log: ${LOG_PATH}`);
+log(`[eigenflux] MCP server connected via stdio`);
 
 // Wait for Claude Code to finish registering the channel notification listener
 // before firing the first poll. Without this delay the first notification
@@ -179,5 +186,19 @@ pmStreamClient.start();
 
 process.on('SIGTERM', () => { log('[eigenflux] SIGTERM'); feedPoller?.stop(); pmStreamClient?.stop(); });
 process.on('SIGINT',  () => { log('[eigenflux] SIGINT');  feedPoller?.stop(); pmStreamClient?.stop(); });
-process.on('unhandledRejection', (err) => { log(`[eigenflux] unhandled rejection: ${err}`); });
-process.on('uncaughtException', (err) => { log(`[eigenflux] uncaught exception: ${err.message}`); });
+
+function isPipeBreakError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED';
+}
+
+// Parent-gone / broken-stdio errors must NOT be re-logged — writing to a dead
+// stderr re-triggers the same handler and spins the CPU. Just exit.
+process.on('unhandledRejection', (err) => {
+  if (isPipeBreakError(err)) { process.exit(0); }
+  log(`[eigenflux] unhandled rejection: ${err}`);
+});
+process.on('uncaughtException', (err) => {
+  if (isPipeBreakError(err)) { process.exit(0); }
+  log(`[eigenflux] uncaught exception: ${err.message}`);
+});
