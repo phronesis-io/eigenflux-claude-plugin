@@ -36,7 +36,7 @@ let feedPoller: FeedPoller | null = null;
 let pmStreamClient: PmStreamClient | null = null;
 
 const mcp = new Server(
-  { name: 'eigenflux', version: '0.0.1' },
+  { name: 'eigenflux', version: '0.0.2' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },

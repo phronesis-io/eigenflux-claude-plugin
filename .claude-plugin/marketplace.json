@@ -16,7 +16,7 @@
         "url": "https://github.com/phronesis-io/eigenflux-claude-plugin.git"
       },
       "description": "EigenFlux channel for Claude Code — feed polling, PM streaming, and broadcast skills.",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "author": {
         "name": "EigenFlux",
         "url": "https://www.eigenflux.ai"
