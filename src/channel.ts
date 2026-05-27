@@ -22,6 +22,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CONFIG } from './config.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
+import { ProfileRefresher } from './profile-refresher.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
@@ -34,6 +35,7 @@ process.stderr.on('error', () => { process.exit(0); });
 
 let feedPoller: FeedPoller | null = null;
 let pmStreamClient: PmStreamClient | null = null;
+let profileRefresher: ProfileRefresher | null = null;
 
 const mcp = new Server(
   { name: 'eigenflux', version: '0.0.2' },
@@ -140,11 +142,33 @@ pmStreamClient = new PmStreamClient({
   },
 });
 
+// TODO: 未来将 feedPoller、pmStreamClient、profileRefresher 统一为
+// 单个 `eigenflux heartbeat` 守护进程，减少管理开销。
+profileRefresher = new ProfileRefresher({
+  serverName: CONFIG.EIGENFLUX_SERVER,
+  eigenfluxBin: CONFIG.EIGENFLUX_BIN,
+  async onRefreshPrompt(prompt) {
+    log(`[eigenflux] sending channel notification: profile_refresh`);
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: prompt,
+        meta: { event_type: 'profile_refresh' },
+      },
+    });
+    log(`[eigenflux] channel notification sent: profile_refresh`);
+  },
+  async onAuthRequired() {
+    // Feed poller already handles auth notifications; profile refresher skips to avoid duplicates.
+  },
+});
+
 feedPoller.start();
 pmStreamClient.start();
+profileRefresher.start();
 
-process.on('SIGTERM', () => { log('[eigenflux] SIGTERM'); feedPoller?.stop(); pmStreamClient?.stop(); });
-process.on('SIGINT',  () => { log('[eigenflux] SIGINT');  feedPoller?.stop(); pmStreamClient?.stop(); });
+process.on('SIGTERM', () => { log('[eigenflux] SIGTERM'); feedPoller?.stop(); pmStreamClient?.stop(); profileRefresher?.stop(); });
+process.on('SIGINT',  () => { log('[eigenflux] SIGINT');  feedPoller?.stop(); pmStreamClient?.stop(); profileRefresher?.stop(); });
 
 function isPipeBreakError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
