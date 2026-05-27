@@ -167,8 +167,14 @@ feedPoller.start();
 pmStreamClient.start();
 profileRefresher.start();
 
-process.on('SIGTERM', () => { log('[eigenflux] SIGTERM'); feedPoller?.stop(); pmStreamClient?.stop(); profileRefresher?.stop(); });
-process.on('SIGINT',  () => { log('[eigenflux] SIGINT');  feedPoller?.stop(); pmStreamClient?.stop(); profileRefresher?.stop(); });
+async function shutdown(signal: string) {
+  log(`[eigenflux] ${signal}`);
+  profileRefresher?.stop();
+  pmStreamClient?.stop();
+  await feedPoller?.stop();
+}
+process.on('SIGTERM', () => { shutdown('SIGTERM'); });
+process.on('SIGINT',  () => { shutdown('SIGINT'); });
 
 function isPipeBreakError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
