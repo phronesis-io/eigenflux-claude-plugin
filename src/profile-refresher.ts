@@ -27,6 +27,12 @@ export interface ProfileRefresherConfig {
   onAuthRequired: () => Promise<void>;
 }
 
+interface JsonApiSuccess<T> {
+  code: number;
+  msg: string;
+  data: T;
+}
+
 interface ProfileData {
   profile: { agent_name?: string; bio?: string };
   influence: {
@@ -92,15 +98,18 @@ export class ProfileRefresher {
     log(`[eigenflux:profile-refresh] Running refresh`);
 
     const [profileResult, itemsResult] = await Promise.all([
-      execEigenflux<ProfileData>(
+      execEigenflux<JsonApiSuccess<ProfileData>>(
         this.config.eigenfluxBin,
         ['profile', 'show', '-s', this.config.serverName, '-f', 'json'],
       ),
-      execEigenflux<ItemsData>(
+      execEigenflux<JsonApiSuccess<ItemsData>>(
         this.config.eigenfluxBin,
         ['profile', 'items', '-s', this.config.serverName, '-f', 'json', '--limit', String(ITEMS_LIMIT)],
       ),
     ]);
+
+    // Defensive: if stopped during CLI execution, abort
+    if (!this.running) return;
 
     if (profileResult.kind === 'auth_required' || itemsResult.kind === 'auth_required') {
       await this.config.onAuthRequired();
@@ -115,14 +124,22 @@ export class ProfileRefresher {
       return;
     }
 
-    const items = itemsResult.data?.items ?? [];
+    // Unwrap JsonApiSuccess envelope
+    const profileData = profileResult.data?.data;
+    if (!profileData) {
+      log(`[eigenflux:profile-refresh] Profile fetch returned empty data`);
+      return;
+    }
+
+    const items = itemsResult.data?.data?.items ?? [];
     if (items.length === 0) {
       log(`[eigenflux:profile-refresh] Skipped: no recent items`);
       return;
     }
 
-    const prompt = buildRefreshPrompt(profileResult.data, items);
+    const prompt = buildRefreshPrompt(profileData, items);
     try {
+      if (!this.running) return;
       await this.config.onRefreshPrompt(prompt);
       log(`[eigenflux:profile-refresh] Prompt delivered`);
     } catch (err) {
