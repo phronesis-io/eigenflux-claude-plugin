@@ -1,3 +1,6 @@
+import * as os from 'os';
+import * as path from 'path';
+
 const SKILL_VER = '0.0.5';
 
 function parseInterval(envKey: string, defaultSec: number): number {
@@ -5,6 +8,18 @@ function parseInterval(envKey: string, defaultSec: number): number {
   const seconds = parseInt(raw, 10);
   return Number.isFinite(seconds) && seconds > 0 ? seconds : defaultSec;
 }
+
+function resolveEigenfluxHome(): string {
+  const envHome = process.env.EIGENFLUX_HOME;
+  if (envHome) {
+    const expanded = envHome === '~' ? os.homedir() : envHome.startsWith('~/') ? path.join(os.homedir(), envHome.slice(2)) : envHome;
+    return expanded.endsWith('.eigenflux') ? expanded : path.join(expanded, '.eigenflux');
+  }
+  return path.join(os.homedir(), '.eigenflux');
+}
+
+// Set EIGENFLUX_HOME once at module load so all CLI child processes inherit it.
+process.env.EIGENFLUX_HOME = resolveEigenfluxHome();
 
 export const CONFIG = {
   FEED_POLL_INTERVAL_SEC: parseInterval('EIGENFLUX_FEED_POLL_INTERVAL', 300),
