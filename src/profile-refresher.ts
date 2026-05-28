@@ -119,13 +119,19 @@ export class ProfileRefresher {
       return;
     }
 
+    const profileData = profileResult.data;
+    if (!profileData) {
+      log(`[eigenflux:profile-refresh] Profile fetch returned empty data`);
+      return;
+    }
+
     const items = itemsResult.data?.items ?? [];
     if (items.length === 0) {
       log(`[eigenflux:profile-refresh] Skipped: no recent items`);
       return;
     }
 
-    const prompt = buildRefreshPrompt(profileResult.data, items);
+    const prompt = buildRefreshPrompt(profileData, items);
     try {
       if (!this.running) return;
       await this.config.onRefreshPrompt(prompt);
