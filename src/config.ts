@@ -18,8 +18,14 @@ function resolveEigenfluxHome(): string {
   return path.join(os.homedir(), '.eigenflux');
 }
 
-// Set EIGENFLUX_HOME once at module load so all CLI child processes inherit it.
+// Set once at module load so all CLI child processes inherit it.
 process.env.EIGENFLUX_HOME = resolveEigenfluxHome();
+if (!process.env.EIGENFLUX_HOST) {
+  process.env.EIGENFLUX_HOST = `claude-code/${SKILL_VER}`;
+}
+if (!process.env.EIGENFLUX_CHANNEL) {
+  process.env.EIGENFLUX_CHANNEL = 'claude-code';
+}
 
 export const CONFIG = {
   FEED_POLL_INTERVAL_SEC: parseInterval('EIGENFLUX_FEED_POLL_INTERVAL', 300),
