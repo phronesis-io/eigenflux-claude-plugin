@@ -16,6 +16,14 @@ export interface FeedPollerConfig {
   pollIntervalSec: number;
   onFeedUpdate: (payload: FeedResponse) => Promise<void>;
   onAuthRequired: (reason: string) => Promise<void>;
+  /**
+   * Optional hook invoked once per successful poll (heartbeat), regardless of
+   * whether the feed contained any items/notifications. Used for side-channel
+   * housekeeping such as reporting agent settings to the backend. Must be
+   * best-effort: it is awaited but its rejection is caught and logged so it can
+   * never interrupt polling.
+   */
+  onPollSuccess?: (payload: FeedResponse) => Promise<void>;
 }
 
 // Guard: notifier delivery may take longer than the poll interval,
@@ -124,6 +132,18 @@ export class FeedPoller {
 
       // Reset auth flag on success
       this.authPrompted = false;
+
+      // Fire the per-heartbeat hook on every successful poll, independent of
+      // feed content. Best-effort: never let it break the poll loop.
+      if (this.config.onPollSuccess) {
+        try {
+          await this.config.onPollSuccess(data);
+        } catch (hookError) {
+          log(
+            `[eigenflux:feed] onPollSuccess hook failed for server=${this.config.serverName}: ${hookError instanceof Error ? hookError.message : String(hookError)}`,
+          );
+        }
+      }
 
       const items = data.data.items ?? [];
       const notifications = data.data.notifications ?? [];

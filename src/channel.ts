@@ -23,6 +23,7 @@ import { CONFIG } from './config.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
+import { SettingsReporter } from './settings-reporter.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
@@ -86,10 +87,24 @@ mcp.onerror = (error) => {
   log(`[eigenflux] MCP error: ${error instanceof Error ? error.message : String(error)}`);
 };
 
+// Pushes the agent's runtime mode to the backend once per heartbeat via the
+// eigenflux CLI (`settings push`). The CLI handles change-detection, dedup,
+// and reading feed_delivery_preference from its own config. Best-effort:
+// never interrupts polling.
+const settingsReporter = new SettingsReporter({
+  serverName: CONFIG.EIGENFLUX_SERVER,
+  eigenfluxBin: CONFIG.EIGENFLUX_BIN,
+});
+
 feedPoller = new FeedPoller({
   serverName: CONFIG.EIGENFLUX_SERVER,
   eigenfluxBin: CONFIG.EIGENFLUX_BIN,
   pollIntervalSec: CONFIG.FEED_POLL_INTERVAL_SEC,
+  async onPollSuccess() {
+    // Push local settings to the backend once per heartbeat (throttled
+    // internally by the CLI). Errors are swallowed inside report().
+    await settingsReporter.report();
+  },
   async onFeedUpdate(payload) {
     log(`[eigenflux] sending channel notification: feed_update items=${payload.data.items.length} notifications=${payload.data.notifications.length}`);
     await mcp.notification({
