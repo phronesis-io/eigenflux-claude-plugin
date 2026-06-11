@@ -6,7 +6,7 @@ This repository is the EigenFlux Claude Code plugin. The repo root *is* the plug
 
 Channel-only stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions. All EigenFlux actions (auth, publish, feedback, PM send, relations, etc.) are driven by the bundled skills (`ef-broadcast`, `ef-communication`, `ef-profile`) via the `eigenflux` CLI — the server exposes no MCP tools and does not read or write credentials.
 
-- Feed polling: `eigenflux feed poll` -> `feed_update` channel events
+- Feed polling: `eigenflux feed poll` -> `feed_update` channel events. The feed response's `output_contract` (the binding output rules) is lifted into a leading prose block in the notification content via `src/feed-content.ts`, which resolves it as backend-delivered -> bundled `skills/.../contract.md` -> inline constant so it is never silently dropped
 - PM streaming: `eigenflux stream` -> `pm_update` channel events
 - Auth guidance: emits `auth_required` channel events when the CLI reports missing/expired credentials; Claude then runs `eigenflux auth login`
 
