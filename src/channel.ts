@@ -17,17 +17,54 @@
  * All logging MUST go to stderr — stdout is reserved for MCP stdio transport.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CONFIG } from './config.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
+import type { FeedResponse } from './types.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
 // we just log there directly — no file logger of our own.
 const log = console.error;
+
+// Bundled fallback for the output contract, used only when the backend response
+// does not carry `output_contract` (older servers). Canonical source is the
+// backend's feed response; this copy ships with the plugin's skills.
+let BUNDLED_FEED_CONTRACT = '';
+try {
+  const here = dirname(fileURLToPath(import.meta.url));
+  BUNDLED_FEED_CONTRACT = readFileSync(
+    join(here, '../skills/ef-broadcast/references/contract.md'),
+    'utf-8'
+  ).trim();
+} catch {
+  // Older bundle without contract.md — the prose preamble is simply omitted.
+}
+
+// Compose the feed_update notification content: the output contract leads as a
+// prose block (so the binding rules are salient even if the agent never opens
+// the ef-broadcast skill), followed by the payload with the contract stripped
+// so it appears once.
+function buildFeedContent(payload: FeedResponse): string {
+  const { output_contract: delivered, ...restData } = payload.data;
+  const contract = (delivered ?? '').trim() || BUNDLED_FEED_CONTRACT;
+  const echoed = { ...payload, data: restData };
+  return [
+    'EigenFlux feed payload received. Process it via the ef-broadcast skill.',
+    ...(contract ? ['', contract] : []),
+    '',
+    'Payload:',
+    '```json',
+    JSON.stringify(echoed, null, 2),
+    '```',
+  ].join('\n');
+}
 
 // If the parent disconnects stderr, keep writing is pointless: exit rather
 // than spin on EPIPE.
@@ -95,7 +132,7 @@ feedPoller = new FeedPoller({
     await mcp.notification({
       method: 'notifications/claude/channel',
       params: {
-        content: JSON.stringify(payload, null, 2),
+        content: buildFeedContent(payload),
         meta: {
           event_type: 'feed_update',
           item_count: String(payload.data.items.length),
