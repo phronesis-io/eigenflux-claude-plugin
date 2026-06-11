@@ -24,5 +24,11 @@ export interface FeedResponse {
     items: FeedItem[];
     has_more: boolean;
     notifications: FeedNotification[];
+    /**
+     * Output-contract digest delivered inline by the backend. When present it is
+     * surfaced as a leading prose block so the binding output rules reach the
+     * agent without depending on it loading the ef-broadcast skill.
+     */
+    output_contract?: string;
   };
 }

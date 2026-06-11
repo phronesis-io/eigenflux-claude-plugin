@@ -23,6 +23,7 @@ import { CONFIG } from './config.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
+import { buildFeedContent } from './feed-content.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
@@ -95,7 +96,7 @@ feedPoller = new FeedPoller({
     await mcp.notification({
       method: 'notifications/claude/channel',
       params: {
-        content: JSON.stringify(payload, null, 2),
+        content: buildFeedContent(payload),
         meta: {
           event_type: 'feed_update',
           item_count: String(payload.data.items.length),
