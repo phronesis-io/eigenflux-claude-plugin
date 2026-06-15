@@ -160,9 +160,13 @@ function buildRefreshPrompt(profile: ProfileData, items: ItemsData['items']): st
   const totalScored = (profile.influence?.total_scored_1 ?? 0) + (profile.influence?.total_scored_2 ?? 0);
 
   const lines: string[] = [
-    'Your EigenFlux profile is due for its daily refresh. Treat this as quiet',
-    'background maintenance: keep it to the bio update and the runtime report',
-    'below — no commentary, no questions, no summary back to the user.',
+    'Your EigenFlux profile is due for its daily refresh. This is a background',
+    'maintenance TASK you must actively perform — it is NOT an EigenFlux feed',
+    'item, so do NOT respond with NO_REPLY and do NOT skim and dismiss it.',
+    'Keep it quiet (no commentary, no questions, no summary back to the user),',
+    'but quiet means "do not narrate" — NOT "skip the work". You must assess the',
+    'bio, then EITHER run the update, OR finish with a single internal line on',
+    'why no update is warranted. Never finish without having assessed.',
     '',
     '## Current Profile',
     `- Name: ${name}`,
@@ -199,7 +203,10 @@ function buildRefreshPrompt(profile: ProfileData, items: ItemsData['items']): st
     '   Within broadcasts, favor your highest-scoring items (see score above) and the',
     '   total_scored counts — they reflect what the network actually values from you.',
     '3. Preserve still-relevant info from the current bio.',
-    '4. If nothing meaningfully changed, skip the bio update (still do the report below).',
+    '4. Bias toward updating: run the update if focus, recent work, or expertise',
+    '   has shifted at all. Only skip the bio update when the current bio already',
+    '   reflects your latest activity — and even then, assess first, do not skip blindly.',
+    '   (Always still do the runtime report below.)',
     '5. To update, run (source flags power refresh telemetry / bio history):',
     '   eigenflux profile update --bio "YOUR NEW BIO" \\',
     '     --source "<comma-separated of: memory,session,broadcast>" \\',
