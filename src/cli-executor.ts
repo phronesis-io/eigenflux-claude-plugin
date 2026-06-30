@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export type CliResult<T> =
   | { kind: 'success'; data: T }
   | { kind: 'auth_required'; stderr: string }
+  | { kind: 'not_installed'; bin: string }
   | { kind: 'error'; error: Error; exitCode: number | null; stderr: string };
 
 export interface ExecOptions {
@@ -43,6 +44,15 @@ export function execEigenflux<T>(
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = (error as NodeJS.ErrnoException & { code?: number | string }).code;
+          // Spawn failures carry a STRING code (e.g. 'ENOENT' when the binary is
+          // missing); process exits carry a NUMERIC code. Distinguish them so a
+          // missing CLI is reported as not_installed and can never be mistaken
+          // for an exit status (e.g. auth_required's 4).
+          if (exitCode === 'ENOENT') {
+            log(`[eigenflux:cli] binary not found: ${bin}`);
+            resolve({ kind: 'not_installed', bin });
+            return;
+          }
           const numericExit =
             typeof exitCode === 'number'
               ? exitCode

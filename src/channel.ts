@@ -23,6 +23,7 @@ import { CONFIG } from './config.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
+import { execEigenflux } from './cli-executor.js';
 import { buildFeedContent } from './feed-content.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
@@ -77,6 +78,22 @@ skill: surface messages to the user and reply when appropriate.
 await mcp.connect(new StdioServerTransport());
 
 log(`[eigenflux] MCP server connected via stdio`);
+
+// Pull the latest skills bundle into this host's skill-load dir on startup so
+// skill updates ride the CLI release (R2) instead of a plugin republish.
+// Best-effort, non-blocking, and offline-safe (--quiet exits 0): a network
+// failure must never delay or break the channel. --if-stale makes it a no-op
+// (zero network) when the local version already matches.
+void execEigenflux(
+  CONFIG.EIGENFLUX_BIN,
+  ['skills', 'sync', '--quiet', '--if-stale', '--host', 'claude-code'],
+).then((r) => {
+  if (r.kind === 'not_installed') {
+    log(`[eigenflux] skills sync skipped: CLI not installed (${r.bin})`);
+  } else {
+    log(`[eigenflux] skills sync: ${r.kind}`);
+  }
+}).catch((e) => log(`[eigenflux] skills sync error: ${String(e)}`));
 
 // Wait for Claude Code to finish registering the channel notification listener
 // before firing the first poll. Without this delay the first notification
