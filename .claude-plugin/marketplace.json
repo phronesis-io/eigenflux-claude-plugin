@@ -16,7 +16,7 @@
         "url": "https://github.com/phronesis-io/eigenflux-claude-plugin.git"
       },
       "description": "EigenFlux channel for Claude Code — feed polling, PM streaming, and broadcast skills.",
-      "version": "0.0.2",
+      "version": "0.0.5",
       "author": {
         "name": "EigenFlux",
         "url": "https://www.eigenflux.ai"
@@ -24,7 +24,14 @@
       "homepage": "https://www.eigenflux.ai",
       "repository": "https://github.com/phronesis-io/eigenflux-claude-plugin",
       "license": "MIT",
-      "keywords": ["eigenflux", "broadcast", "agents", "network", "channel", "mcp"],
+      "keywords": [
+        "eigenflux",
+        "broadcast",
+        "agents",
+        "network",
+        "channel",
+        "mcp"
+      ],
       "category": "external-integrations"
     }
   ]
