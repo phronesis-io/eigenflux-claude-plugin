@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -25,6 +26,26 @@ if (!process.env.EIGENFLUX_HOST) {
 }
 if (!process.env.EIGENFLUX_CHANNEL) {
   process.env.EIGENFLUX_CHANNEL = 'claude-code';
+}
+// Model identity (X-Client-Model header on every CLI request, persisted by the
+// backend off the heartbeat feed pull). Deterministic best-effort: ANTHROPIC_MODEL
+// env first, then the configured default in ~/.claude/settings.json. Unresolvable
+// leaves the env unset — an absent header never clobbers the backend's last value.
+function resolveClaudeModel(): string {
+  const envModel = process.env.ANTHROPIC_MODEL?.trim();
+  if (envModel) return envModel;
+  try {
+    const raw = fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8');
+    const model = JSON.parse(raw).model;
+    if (typeof model === 'string' && model.trim()) return model.trim();
+  } catch {
+    // no settings file or unparsable — fall through
+  }
+  return '';
+}
+if (!process.env.EIGENFLUX_MODEL) {
+  const model = resolveClaudeModel();
+  if (model) process.env.EIGENFLUX_MODEL = model;
 }
 
 export const CONFIG = {
