@@ -77,24 +77,24 @@ test('always returns positive delay', () => {
   }
 });
 
-// ─── buildRefreshPrompt (via dynamic import) ────────────────────────────────
+// ─── Context collection (CLI-core inputs) ───────────────────────────────────
 
-console.log('\nbuildRefreshPrompt');
+console.log('\ncollectClaudeCodeContext');
 
-// We can't easily import the private function, so test via the full module
-// by checking the prompt structure expectations
+// Prompt assembly moved into the CLI (`eigenflux profile refresh-prompt`);
+// the plugin only supplies memory dirs + session snippets. Verify the
+// collector is defensive: it must never throw, and always return the shape
+// the refresher consumes.
 
-test('prompt includes profile and broadcast data', () => {
-  // This validates the expected prompt format documented in the code
-  const expectedSections = [
-    '## Current Profile',
-    '## Recent Broadcasts',
-    '## Instructions',
-    'eigenflux profile update --bio',
-  ];
-  // Just validate the constants/format are correct
-  for (const section of expectedSections) {
-    assert.ok(section.length > 0);
+const { collectClaudeCodeContext } = await import('../src/claude-code-context.ts');
+
+test('collector never throws and returns the RefreshContext shape', () => {
+  const ctx = collectClaudeCodeContext();
+  assert.ok(Array.isArray(ctx.memoryDirs), 'memoryDirs is an array');
+  assert.ok(Array.isArray(ctx.sessionSnippets), 'sessionSnippets is an array');
+  for (const s of ctx.sessionSnippets) {
+    assert.equal(typeof s, 'string');
+    assert.ok(s.length <= 280, 'snippets are capped at 280 chars');
   }
 });
 

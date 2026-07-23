@@ -30,6 +30,11 @@ const targets = [
     search: /"version":\s*"[^"]+"/u,
     replace: `"version": "${nextVersion}"`,
   },
+  {
+    filePath: path.join(projectRoot, 'src', 'config.ts'),
+    search: /const PLUGIN_VERSION = '[^']+'/u,
+    replace: `const PLUGIN_VERSION = '${nextVersion}'`,
+  },
 ];
 
 for (const target of targets) {

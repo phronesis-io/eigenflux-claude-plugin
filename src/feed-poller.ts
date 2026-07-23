@@ -2,20 +2,31 @@
  * Feed poller for EigenFlux broadcast items.
  * Uses the eigenflux CLI (`eigenflux feed poll`) instead of direct HTTP calls.
  *
+ * The poll interval is read fresh from the CLI config (`feed_poll_interval`)
+ * before each scheduling, so dashboard/CLI changes take effect within one
+ * cycle; the EIGENFLUX_FEED_POLL_INTERVAL env var overrides when set.
+ *
  * All logging goes to stderr (stdout reserved for MCP stdio transport).
  */
 
 import type { FeedResponse } from './types.js';
 import { execEigenflux } from './cli-executor.js';
+import { readPollIntervalSec } from './poll-interval.js';
+import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
 
 const log = console.error;
 
 export interface FeedPollerConfig {
   serverName: string;
   eigenfluxBin: string;
-  pollIntervalSec: number;
+  /** Env override; null = read the CLI config dynamically each cycle. */
+  pollIntervalOverrideSec: number | null;
   onFeedUpdate: (payload: FeedResponse) => Promise<void>;
   onAuthRequired: (reason: string) => Promise<void>;
+  /** Fired once when the CLI binary is missing (ENOENT). */
+  onCliMissing?: () => Promise<void>;
+  /** Fired after every successful poll, including empty feeds. Best-effort. */
+  onPollSuccess?: () => void;
 }
 
 // Guard: notifier delivery may take longer than the poll interval,
@@ -27,6 +38,7 @@ export class FeedPoller {
   private timeoutId: NodeJS.Timeout | null = null;
   private running = false;
   private authPrompted = false;
+  private cliMissingPrompted = false;
   private deliveryInFlight = false;
   private deliveryStartedAt = 0;
   private deliverySkipCount = 0;
@@ -43,7 +55,10 @@ export class FeedPoller {
     }
 
     this.running = true;
-    log(`[eigenflux:feed] Starting poller for server=${this.config.serverName} (interval: ${this.config.pollIntervalSec}s)`);
+    const intervalNote = this.config.pollIntervalOverrideSec !== null
+      ? `${this.config.pollIntervalOverrideSec}s (env override)`
+      : `dynamic (CLI config, default ${DEFAULT_POLL_INTERVAL_SEC}s)`;
+    log(`[eigenflux:feed] Starting poller for server=${this.config.serverName} (interval: ${intervalNote})`);
 
     // Immediate poll, then chain-schedule subsequent polls
     this.pollOnce()
@@ -51,7 +66,7 @@ export class FeedPoller {
         log('[eigenflux:feed] Initial poll error:', err);
       })
       .finally(() => {
-        this.scheduleNext();
+        void this.scheduleNext();
       });
   }
 
@@ -77,7 +92,12 @@ export class FeedPoller {
     }
   }
 
-  private scheduleNext(): void {
+  private async scheduleNext(): Promise<void> {
+    if (!this.running) return;
+
+    const intervalSec = this.config.pollIntervalOverrideSec
+      ?? await readPollIntervalSec(this.config.eigenfluxBin, this.config.serverName);
+
     if (!this.running) return;
 
     this.timeoutId = setTimeout(() => {
@@ -87,9 +107,9 @@ export class FeedPoller {
           log('[eigenflux:feed] Poll error:', err);
         })
         .finally(() => {
-          this.scheduleNext();
+          void this.scheduleNext();
         });
-    }, this.config.pollIntervalSec * 1000);
+    }, intervalSec * 1000);
   }
 
   async pollOnce(): Promise<FeedResponse | null> {
@@ -100,6 +120,15 @@ export class FeedPoller {
         this.config.eigenfluxBin,
         ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json']
       );
+
+      if (result.kind === 'not_installed') {
+        log(`[eigenflux:feed] CLI not installed (bin=${result.bin})`);
+        if (!this.cliMissingPrompted && this.config.onCliMissing) {
+          this.cliMissingPrompted = true;
+          await this.config.onCliMissing();
+        }
+        return null;
+      }
 
       if (result.kind === 'auth_required') {
         log('[eigenflux:feed] Auth required');
@@ -122,14 +151,24 @@ export class FeedPoller {
         data: result.data,
       };
 
-      // Reset auth flag on success
+      // Reset prompts on success (CLI is back / auth restored)
       this.authPrompted = false;
+      this.cliMissingPrompted = false;
 
       const items = data.data.items ?? [];
       const notifications = data.data.notifications ?? [];
       log(
         `[eigenflux:feed] Polled: ${items.length} items, ${notifications.length} notifications, has_more=${data.data.has_more}`
       );
+
+      // Piggy-back per-poll best-effort tasks (settings push, feedback flush).
+      if (this.config.onPollSuccess) {
+        try {
+          this.config.onPollSuccess();
+        } catch (err) {
+          log(`[eigenflux:feed] onPollSuccess hook error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       if (items.length > 0 || notifications.length > 0) {
         // Check for stale delivery flag (delivery promise hung)

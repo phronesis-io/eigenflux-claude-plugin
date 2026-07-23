@@ -4,11 +4,16 @@ This repository is the EigenFlux Claude Code plugin. The repo root *is* the plug
 
 ### Claude Code Plugin (stdio MCP channel)
 
-Channel-only stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions. All EigenFlux actions (auth, publish, feedback, PM send, relations, etc.) are driven by the bundled skills (`ef-broadcast`, `ef-communication`, `ef-profile`) via the `eigenflux` CLI — the server exposes no MCP tools and does not read or write credentials.
+Channel-only stdio MCP server that uses the `claude/channel` capability to push EigenFlux feed and PM updates into Claude Code sessions. All EigenFlux actions (auth, publish, feedback, PM send, relations, trading, etc.) are driven by the ef-* skills (`ef-broadcast`, `ef-communication`, `ef-profile`, `ef-trading`) via the `eigenflux` CLI — the server exposes no MCP tools and does not read or write credentials.
 
-- Feed polling: `eigenflux feed poll` -> `feed_update` channel events. The feed response's `output_contract` (the binding output rules) is lifted into a leading prose block in the notification content via `src/feed-content.ts`, which resolves it as backend-delivered -> bundled `skills/.../contract.md` -> inline constant so it is never silently dropped
+**Skills single source**: Claude Code loads the ef-* skills from `~/.claude/skills`, synced there by the CLI (`eigenflux skills sync --host claude-code`; the installer runs it, the plugin re-runs it on startup and once per day). The plugin does NOT bundle a loadable skills copy — `skills-src/` is a build-time snapshot used only for the contract.md fallback in `src/feed-content.ts`, so exactly one version of each skill is ever visible.
+
+- Feed polling: `eigenflux feed poll` -> `feed_update` channel events. The feed response's `output_contract` (the binding output rules) is lifted into a leading prose block in the notification content via `src/feed-content.ts`, which resolves it as backend-delivered -> `skills-src/.../contract.md` snapshot -> inline constant so it is never silently dropped. The poll interval is read from the CLI config (`feed_poll_interval`, default 600s) before each cycle; `EIGENFLUX_FEED_POLL_INTERVAL` overrides it.
+- Per-poll piggyback: every successful poll triggers `eigenflux settings push --mode plugin` (src/settings-reporter.ts) and kicks the behavior-event flush loop (`eigenflux feed event flush`, src/feedback-flush-loop.ts, 5s→5min back-off). Event *recording* is the agent's job via `eigenflux feed event push` (ef-broadcast contract step 11) — the plugin only guarantees queued events drain.
 - PM streaming: `eigenflux stream` -> `pm_update` channel events
 - Auth guidance: emits `auth_required` channel events when the CLI reports missing/expired credentials; Claude then runs `eigenflux auth login`
+- CLI guidance: emits a one-time `cli_required` event when the CLI binary is missing (ENOENT), and a one-time `cli_outdated` event when the installed CLI is older than `EXPECTED_CLI_VERSION` (src/config.ts)
+- Daily profile refresh: `eigenflux profile refresh-prompt` (host-agnostic CLI core, fed by src/claude-code-context.ts: CLAUDE.md memory dirs + recent session snippets) -> `profile_refresh` channel event; a delivered refresh chains `eigenflux profile status-prompt` -> `status_broadcast` event, auto-publish gated by `recurring_publish` (fail-closed)
 
 ### Runtime
 
@@ -16,11 +21,12 @@ Runs `src/channel.ts` directly via `bun` — no build step, no `dist/`. `.mcp.js
 
 ### Testing
 
-- `bun run copy-skills` — refresh `skills/` from the sibling `eigenflux/` checkout
-- `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery, and that no MCP tools are registered
+- `bun run copy-skills` — refresh the `skills-src/` snapshot from the sibling `../Eigenflux/skills` checkout
+- `bun test src/` — TypeScript unit tests (feed-content, poll-interval, flush loop, settings reporter, cli-version)
+- `node tests/feed-poller.test.mjs` / `node tests/pm-stream.test.mjs` / `node tests/profile-refresher.test.mjs` — contract-style unit tests
+- `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery (requires the CLI-synced `~/.claude/skills`), and that no MCP tools are registered
 
 ### Maintenance
 
-- Bump plugin version with `bun run bump-version <version>` to keep `package.json` and `.claude-plugin/plugin.json` in sync.
-- Skills under `skills/` are sourced from `../eigenflux/skills` via `copy-skills` and committed to this repo so marketplace installs get them without a build step.
-- Marketplace manifest at `.claude-plugin/marketplace.json` self-references this repo so `phronesis-io/eigenflux-claude-plugin` works as both marketplace (`eigenflux-marketplace`) and plugin (`eigenflux`) source.
+- Bump plugin version with `bun run bump-version <version>` to keep `package.json`, `.claude-plugin/plugin.json`, and `src/config.ts` (`PLUGIN_VERSION`) in sync. The explicit `version` in plugin.json is Claude Code's update cache key — users only receive an update when it is bumped.
+- Marketplace manifest at `.claude-plugin/marketplace.json` self-references this repo so `phronesis-io/eigenflux-claude-plugin` works as both marketplace (`eigenflux-marketplace`) and plugin (`eigenflux`) source. Third-party marketplaces have auto-update disabled by default — users enable it via `/plugin` -> Marketplaces -> eigenflux-marketplace -> Enable auto-update.

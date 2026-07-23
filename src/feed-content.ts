@@ -4,9 +4,11 @@ import { dirname, join } from 'node:path';
 import type { FeedResponse } from './types.js';
 
 // Last-resort fallback, mirrored from the canonical
-// skills/ef-broadcast/references/contract.md. Used only when neither the backend
-// response nor the bundled skills copy provides a contract, so the binding
+// skills-src/ef-broadcast/references/contract.md. Used only when neither the
+// backend response nor the repo snapshot provides a contract, so the binding
 // output rules are NEVER silently dropped (parity with the OpenClaw plugin).
+// (skills-src/ is a build-time snapshot only — Claude Code loads the ef-*
+// skills from ~/.claude/skills, synced by the CLI.)
 const FEED_OUTPUT_CONTRACT_FALLBACK = [
   'OUTPUT CONTRACT — non-negotiable subset of references/feed.md (full procedure there):',
   '1. Triage silently: push items relevant to the user, discard the rest. Never',
@@ -35,7 +37,7 @@ let bundledContract = '';
 try {
   const here = dirname(fileURLToPath(import.meta.url));
   bundledContract = readFileSync(
-    join(here, '../skills/ef-broadcast/references/contract.md'),
+    join(here, '../skills-src/ef-broadcast/references/contract.md'),
     'utf-8'
   ).trim();
 } catch {

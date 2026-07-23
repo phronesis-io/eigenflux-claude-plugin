@@ -20,6 +20,12 @@ export type CliResult<T> =
 export interface ExecOptions {
   timeout?: number;
   cwd?: string;
+  /**
+   * When false, return trimmed stdout as-is instead of JSON-parsing it. For
+   * plain-text commands (`profile refresh-prompt`, `settings push`, …).
+   * Defaults to true.
+   */
+  parseJson?: boolean;
 }
 
 export function execEigenflux<T>(
@@ -77,6 +83,10 @@ export function execEigenflux<T>(
         }
 
         const trimmed = stdout.trim();
+        if (options?.parseJson === false) {
+          resolve({ kind: 'success', data: trimmed as unknown as T });
+          return;
+        }
         if (!trimmed) {
           resolve({
             kind: 'success',
