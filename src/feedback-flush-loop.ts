@@ -7,9 +7,10 @@
  * pending arms an exponential back-off (5s base, 5min cap); a clean flush
  * (or empty queue) resets it and the loop goes idle until the next kick.
  *
- * The agent records events itself via `eigenflux feed event push` (see the
- * ef-broadcast skill's contract step 11); this loop only guarantees queued
- * events eventually reach the backend. Kicked on every successful feed poll.
+ * The agent records events via `eigenflux feed event record` (see the
+ * ef-broadcast skill's contract step 11), which validates, enriches, and
+ * queues them; this loop guarantees queued events eventually reach the
+ * backend. Kicked on every successful feed poll.
  *
  * Ported from the OpenClaw plugin's feedback-flush-loop (same constants).
  * All logging goes to stderr (stdout reserved for MCP stdio transport).
