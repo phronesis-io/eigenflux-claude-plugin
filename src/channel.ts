@@ -135,45 +135,83 @@ mcp.onerror = (error) => {
   log(`[eigenflux] MCP error: ${error instanceof Error ? error.message : String(error)}`);
 };
 
-// ─── CLI presence / version guidance (one-time each) ────────────────────────
+// ─── CLI presence / version guidance ────────────────────────────────────────
+//
+// Gate semantics (converged with the poller's episode gate): a prompt latches
+// only AFTER its notification was actually delivered — a send that fails (or
+// fires before Claude Code registered the channel listener) leaves the gate
+// open, so the next trigger retries instead of going permanently silent. The
+// cli_required gate is per missing-episode: a successful poll resets it, so a
+// CLI that disappears again later re-prompts (same semantics as auth_required).
 
 let cliRequiredSent = false;
+let cliRequiredInFlight = false;
 async function sendCliRequired(): Promise<void> {
-  if (cliRequiredSent) return;
-  cliRequiredSent = true;
-  log('[eigenflux] sending channel notification: cli_required');
-  await mcp.notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: [
-        'The eigenflux CLI is not installed, so the EigenFlux plugin is idle.',
-        'Tell the user, and offer to install it by running:',
-        '  curl -fsSL https://www.eigenflux.ai/install.sh | sh',
-        'The installer also syncs the ef-* skills into ~/.claude/skills.',
-      ].join('\n'),
-      meta: { event_type: 'cli_required' },
-    },
-  });
+  if (cliRequiredSent || cliRequiredInFlight) return;
+  cliRequiredInFlight = true;
+  try {
+    log('[eigenflux] sending channel notification: cli_required');
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: [
+          'The eigenflux CLI is not installed, so the EigenFlux plugin is idle.',
+          'Tell the user, and offer to install it by running:',
+          '  curl -fsSL https://www.eigenflux.ai/install.sh | sh',
+          'The installer also syncs the ef-* skills into ~/.claude/skills.',
+        ].join('\n'),
+        meta: { event_type: 'cli_required' },
+      },
+    });
+    cliRequiredSent = true;
+  } catch (err) {
+    // Leave the gate open — the next not_installed trigger retries.
+    log(`[eigenflux] cli_required notification failed (will retry): ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    cliRequiredInFlight = false;
+  }
 }
 
-let cliOutdatedSent = false;
+/** Called when a poll succeeds: the CLI is demonstrably back, so a future
+ *  missing-episode may prompt again. */
+function resetCliRequiredGate(): void {
+  cliRequiredSent = false;
+}
+
+// One completed check per process: "checked" means the version was read AND,
+// if outdated, the notification was actually delivered. An unreadable version
+// (CLI missing) or a failed send leaves the flag unset so a later poll — e.g.
+// after the user installs the CLI mid-session — completes the check.
+let cliVersionChecked = false;
+let cliCheckInFlight = false;
 async function checkCliVersion(): Promise<void> {
-  if (cliOutdatedSent) return;
-  const installed = await getInstalledCliVersion(CONFIG.EIGENFLUX_BIN);
-  if (!isCliOutdated(installed, CONFIG.EXPECTED_CLI_VERSION)) return;
-  cliOutdatedSent = true;
-  log(`[eigenflux] sending channel notification: cli_outdated (installed=${installed}, expected>=${CONFIG.EXPECTED_CLI_VERSION})`);
-  await mcp.notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: [
-        `The installed eigenflux CLI (v${installed}) is older than this plugin expects (>= v${CONFIG.EXPECTED_CLI_VERSION}).`,
-        'Newer commands may silently fail. Tell the user, and offer to upgrade by running:',
-        '  curl -fsSL https://www.eigenflux.ai/install.sh | sh',
-      ].join('\n'),
-      meta: { event_type: 'cli_outdated', installed: installed ?? '', expected: CONFIG.EXPECTED_CLI_VERSION },
-    },
-  });
+  if (cliVersionChecked || cliCheckInFlight) return;
+  cliCheckInFlight = true;
+  try {
+    const installed = await getInstalledCliVersion(CONFIG.EIGENFLUX_BIN);
+    if (installed === null) return; // CLI missing/unreadable — check again later
+    if (!isCliOutdated(installed, CONFIG.EXPECTED_CLI_VERSION)) {
+      cliVersionChecked = true;
+      return;
+    }
+    log(`[eigenflux] sending channel notification: cli_outdated (installed=${installed}, expected>=${CONFIG.EXPECTED_CLI_VERSION})`);
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: [
+          `The installed eigenflux CLI (v${installed}) is older than this plugin expects (>= v${CONFIG.EXPECTED_CLI_VERSION}).`,
+          'Newer commands may silently fail. Tell the user, and offer to upgrade by running:',
+          '  curl -fsSL https://www.eigenflux.ai/install.sh | sh',
+        ].join('\n'),
+        meta: { event_type: 'cli_outdated', installed, expected: CONFIG.EXPECTED_CLI_VERSION },
+      },
+    });
+    cliVersionChecked = true;
+  } catch (err) {
+    log(`[eigenflux] cli_outdated check failed (will retry): ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    cliCheckInFlight = false;
+  }
 }
 
 // Startup checks, now that the listener is ready: a missing CLI detected by
@@ -229,6 +267,11 @@ feedPoller = new FeedPoller({
     await sendCliRequired();
   },
   onPollSuccess() {
+    // CLI is demonstrably present: close the missing-episode and complete a
+    // pending version check (covers mid-session installs and early sends
+    // dropped before the listener was ready).
+    resetCliRequiredGate();
+    void checkCliVersion();
     // Best-effort: report runtime settings and drain queued behavior events.
     void settingsReporter.report();
     flushLoop.kick();

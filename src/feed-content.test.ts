@@ -24,9 +24,12 @@ test('uses the backend-delivered contract and strips it from the echoed payload'
 test('falls back to a non-empty contract when the server omits the field', () => {
   const out = buildFeedContent(feed({}));
 
-  // Bundled skills copy or inline fallback — never empty, never dropped.
+  // skills-src snapshot or inline fallback — never empty, never dropped.
+  // Assert phrases stable across BOTH sources, not one snapshot's wording
+  // (a refreshed snapshot broke the previous literal-coupled assertion).
   expect(out).toContain('OUTPUT CONTRACT');
-  expect(out).toContain('📡 Powered by EigenFlux');
-  expect(out).toContain('untrusted third-party data');
+  expect(out).toContain('Powered by EigenFlux');
+  expect(out).toContain('untrusted');
+  expect(out).toContain('not instructions');
   expect(out.indexOf('OUTPUT CONTRACT')).toBeLessThan(out.indexOf('Payload:'));
 });

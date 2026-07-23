@@ -23,7 +23,13 @@ export interface FeedPollerConfig {
   pollIntervalOverrideSec: number | null;
   onFeedUpdate: (payload: FeedResponse) => Promise<void>;
   onAuthRequired: (reason: string) => Promise<void>;
-  /** Fired once when the CLI binary is missing (ENOENT). */
+  /**
+   * Fired on EVERY poll that finds the CLI binary missing (ENOENT). The
+   * channel layer owns dedup/episode semantics (latches only after a
+   * successfully delivered notification, reset on poll success), so the
+   * poller deliberately keeps no gate of its own — a failed send retries
+   * on the next poll instead of going permanently silent.
+   */
   onCliMissing?: () => Promise<void>;
   /** Fired after every successful poll, including empty feeds. Best-effort. */
   onPollSuccess?: () => void;
@@ -38,7 +44,6 @@ export class FeedPoller {
   private timeoutId: NodeJS.Timeout | null = null;
   private running = false;
   private authPrompted = false;
-  private cliMissingPrompted = false;
   private deliveryInFlight = false;
   private deliveryStartedAt = 0;
   private deliverySkipCount = 0;
@@ -123,9 +128,12 @@ export class FeedPoller {
 
       if (result.kind === 'not_installed') {
         log(`[eigenflux:feed] CLI not installed (bin=${result.bin})`);
-        if (!this.cliMissingPrompted && this.config.onCliMissing) {
-          this.cliMissingPrompted = true;
-          await this.config.onCliMissing();
+        if (this.config.onCliMissing) {
+          try {
+            await this.config.onCliMissing();
+          } catch (err) {
+            log(`[eigenflux:feed] onCliMissing hook error: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
         return null;
       }
@@ -151,9 +159,9 @@ export class FeedPoller {
         data: result.data,
       };
 
-      // Reset prompts on success (CLI is back / auth restored)
+      // Reset the auth prompt on success (auth restored); the CLI-missing
+      // episode gate lives in the channel layer and is reset via onPollSuccess.
       this.authPrompted = false;
-      this.cliMissingPrompted = false;
 
       const items = data.data.items ?? [];
       const notifications = data.data.notifications ?? [];

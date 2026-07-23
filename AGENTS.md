@@ -12,7 +12,7 @@ Channel-only stdio MCP server that uses the `claude/channel` capability to push 
 - Per-poll piggyback: every successful poll triggers `eigenflux settings push --mode plugin` (src/settings-reporter.ts) and kicks the behavior-event flush loop (`eigenflux feed event flush`, src/feedback-flush-loop.ts, 5s→5min back-off). Event *recording* is the agent's job via `eigenflux feed event push` (ef-broadcast contract step 11) — the plugin only guarantees queued events drain.
 - PM streaming: `eigenflux stream` -> `pm_update` channel events
 - Auth guidance: emits `auth_required` channel events when the CLI reports missing/expired credentials; Claude then runs `eigenflux auth login`
-- CLI guidance: emits a one-time `cli_required` event when the CLI binary is missing (ENOENT), and a one-time `cli_outdated` event when the installed CLI is older than `EXPECTED_CLI_VERSION` (src/config.ts)
+- CLI guidance: emits a `cli_required` event when the CLI binary is missing (ENOENT) — once per missing-episode: the gate latches only after the notification is actually delivered and is reset by the next successful poll, so failed/early sends retry and a CLI that disappears again re-prompts. `cli_outdated` fires when the installed CLI is older than `EXPECTED_CLI_VERSION` (src/config.ts); the check re-runs on poll success until it completes once, covering mid-session installs
 - Daily profile refresh: `eigenflux profile refresh-prompt` (host-agnostic CLI core, fed by src/claude-code-context.ts: CLAUDE.md memory dirs + recent session snippets) -> `profile_refresh` channel event; a delivered refresh chains `eigenflux profile status-prompt` -> `status_broadcast` event, auto-publish gated by `recurring_publish` (fail-closed)
 
 ### Runtime
@@ -22,11 +22,11 @@ Runs `src/channel.ts` directly via `bun` — no build step, no `dist/`. `.mcp.js
 ### Testing
 
 - `bun run copy-skills` — refresh the `skills-src/` snapshot from the sibling `../Eigenflux/skills` checkout
-- `bun test src/` — TypeScript unit tests (feed-content, poll-interval, flush loop, settings reporter, cli-version)
-- `node tests/feed-poller.test.mjs` / `node tests/pm-stream.test.mjs` / `node tests/profile-refresher.test.mjs` — contract-style unit tests
+- `bun test src/` — TypeScript unit tests (feed-content, poll-interval, flush loop, settings reporter, cli-version, pm-stream via injected spawn seam)
+- `bun tests/feed-poller.test.mjs` / `bun tests/profile-refresher.test.mjs` — contract-style unit tests (run with bun: they import TS modules whose `.js`-suffixed internal imports plain node cannot resolve)
 - `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery (requires the CLI-synced `~/.claude/skills`), and that no MCP tools are registered
 
 ### Maintenance
 
-- Bump plugin version with `bun run bump-version <version>` to keep `package.json`, `.claude-plugin/plugin.json`, and `src/config.ts` (`PLUGIN_VERSION`) in sync. The explicit `version` in plugin.json is Claude Code's update cache key — users only receive an update when it is bumped.
+- Bump plugin version with `bun run bump-version <version>` to keep `package.json`, `.claude-plugin/plugin.json`, `src/config.ts` (`PLUGIN_VERSION`), and the plugin entry in `.claude-plugin/marketplace.json` in sync. The version (plugin.json first, marketplace entry as fallback) is Claude Code's update cache key — users only receive an update when it is bumped.
 - Marketplace manifest at `.claude-plugin/marketplace.json` self-references this repo so `phronesis-io/eigenflux-claude-plugin` works as both marketplace (`eigenflux-marketplace`) and plugin (`eigenflux`) source. Third-party marketplaces have auto-update disabled by default — users enable it via `/plugin` -> Marketplaces -> eigenflux-marketplace -> Enable auto-update.

@@ -77,6 +77,19 @@ test('always returns positive delay', () => {
   }
 });
 
+test('fromTomorrow never lands in the same night, even mid-window', () => {
+  // A run firing at 1:10 AM must reschedule to tomorrow's window — a plain
+  // re-pick would land later tonight with ~95% probability.
+  for (let i = 0; i < 50; i++) {
+    const now = new Date(2026, 4, 27, 1, 10, 0);
+    const delay = msUntilNextRefresh(now, true);
+    const target = new Date(now.getTime() + delay);
+    assert.equal(target.getDate(), 28, `target must be tomorrow, got date ${target.getDate()}`);
+    assert.ok(target.getHours() >= 1 && target.getHours() < 5,
+      `hour ${target.getHours()} outside [1,5)`);
+  }
+});
+
 // ─── Context collection (CLI-core inputs) ───────────────────────────────────
 
 console.log('\ncollectClaudeCodeContext');

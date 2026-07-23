@@ -67,9 +67,9 @@ export class ProfileRefresher {
     log(`[eigenflux:profile-refresh] Stopped`);
   }
 
-  private scheduleNext(): void {
+  private scheduleNext(fromTomorrow = false): void {
     if (!this.running) return;
-    const delay = msUntilNextRefresh(new Date());
+    const delay = msUntilNextRefresh(new Date(), fromTomorrow);
     const target = new Date(Date.now() + delay);
     log(`[eigenflux:profile-refresh] Next refresh at ${target.toLocaleTimeString()} (in ${Math.round(delay / 60_000)}min)`);
     this.timeoutId = setTimeout(async () => {
@@ -88,7 +88,11 @@ export class ProfileRefresher {
           log(`[eigenflux:profile-refresh] Daily tick hook crashed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      this.scheduleNext();
+      // A run that fires inside the 1-5 AM window must NOT reschedule into the
+      // same night (a fresh random pick would land later tonight with ~95%
+      // probability, re-running the refresh AND the status broadcast 2-4x per
+      // night). After any run, the next slot is tomorrow's window.
+      this.scheduleNext(true);
     }, delay);
   }
 
@@ -240,8 +244,16 @@ export class ProfileRefresher {
   }
 }
 
-export function msUntilNextRefresh(now: Date): number {
+/**
+ * Milliseconds until a random time in the [1:00, 5:00) AM local window.
+ * `fromTomorrow` pins the pick to tomorrow's window regardless of the current
+ * time — used after a completed run so one night never fires twice.
+ */
+export function msUntilNextRefresh(now: Date, fromTomorrow = false): number {
   const target = new Date(now);
+  if (fromTomorrow) {
+    target.setDate(target.getDate() + 1);
+  }
   const hour = REFRESH_WINDOW_START + Math.floor(Math.random() * (REFRESH_WINDOW_END - REFRESH_WINDOW_START));
   target.setHours(hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60), 0);
   if (target.getTime() <= now.getTime()) {

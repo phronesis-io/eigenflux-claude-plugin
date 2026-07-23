@@ -10,12 +10,21 @@ import { createInterface, Interface as ReadlineInterface } from 'readline';
 
 const log = console.error;
 
-const EXIT_AUTH_REQUIRED = 4;
-const INITIAL_BACKOFF_MS = 1_000;
-const MAX_BACKOFF_MS = 60_000;
-const BACKOFF_MULTIPLIER = 2;
-const STOP_GRACE_MS = 5_000;
-const MAX_CONSECUTIVE_FAILURES = 20;
+// Exported so tests exercise the real implementation against the real
+// constants instead of re-declaring them.
+export const EXIT_AUTH_REQUIRED = 4;
+export const INITIAL_BACKOFF_MS = 1_000;
+export const MAX_BACKOFF_MS = 60_000;
+export const BACKOFF_MULTIPLIER = 2;
+export const STOP_GRACE_MS = 5_000;
+export const MAX_CONSECUTIVE_FAILURES = 20;
+
+/** Minimal spawn seam so tests can drive the client with a fake process. */
+export type SpawnFn = (
+  bin: string,
+  args: string[],
+  options: { stdio: ['ignore', 'pipe', 'pipe'] }
+) => ChildProcess;
 
 export interface PmStreamEvent {
   type: string;
@@ -38,21 +47,38 @@ export interface PmStreamClientConfig {
   eigenfluxBin: string;
   onPmEvent: (event: PmStreamEvent) => Promise<void>;
   onAuthRequired: () => Promise<void>;
+  /** Test seams; production uses child_process.spawn and the exported defaults. */
+  spawnFn?: SpawnFn;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  maxConsecutiveFailures?: number;
+  stopGraceMs?: number;
 }
 
 export class PmStreamClient {
   private config: PmStreamClientConfig;
+  private readonly spawnFn: SpawnFn;
+  private readonly initialBackoffMs: number;
+  private readonly maxBackoffMs: number;
+  private readonly maxConsecutiveFailures: number;
+  private readonly stopGraceMs: number;
   private child: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private stopping = false;
   private running = false;
   private lastCursor: string | null = null;
-  private backoffMs = INITIAL_BACKOFF_MS;
+  private backoffMs: number;
   private consecutiveFailures = 0;
   private restartTimer: NodeJS.Timeout | null = null;
 
   constructor(config: PmStreamClientConfig) {
     this.config = config;
+    this.spawnFn = config.spawnFn ?? (spawn as unknown as SpawnFn);
+    this.initialBackoffMs = config.initialBackoffMs ?? INITIAL_BACKOFF_MS;
+    this.maxBackoffMs = config.maxBackoffMs ?? MAX_BACKOFF_MS;
+    this.maxConsecutiveFailures = config.maxConsecutiveFailures ?? MAX_CONSECUTIVE_FAILURES;
+    this.stopGraceMs = config.stopGraceMs ?? STOP_GRACE_MS;
+    this.backoffMs = this.initialBackoffMs;
   }
 
   isRunning(): boolean {
@@ -108,7 +134,7 @@ export class PmStreamClient {
             // Process already exited
           }
           resolve();
-        }, STOP_GRACE_MS);
+        }, this.stopGraceMs);
 
         child.once('exit', () => {
           clearTimeout(forceKillTimer);
@@ -130,7 +156,7 @@ export class PmStreamClient {
 
     log(`[eigenflux:stream] Spawning: ${this.config.eigenfluxBin} ${args.join(' ')}`);
 
-    const child = spawn(this.config.eigenfluxBin, args, {
+    const child = this.spawnFn(this.config.eigenfluxBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.child = child;
@@ -191,7 +217,7 @@ export class PmStreamClient {
       }
 
       // Reset backoff on successful message
-      this.backoffMs = INITIAL_BACKOFF_MS;
+      this.backoffMs = this.initialBackoffMs;
       this.consecutiveFailures = 0;
 
       this.config.onPmEvent(event).catch((err) => {
@@ -209,8 +235,8 @@ export class PmStreamClient {
 
     this.consecutiveFailures += 1;
 
-    if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-      log(`[eigenflux:stream] Giving up after ${MAX_CONSECUTIVE_FAILURES} consecutive failures`);
+    if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+      log(`[eigenflux:stream] Giving up after ${this.maxConsecutiveFailures} consecutive failures`);
       this.running = false;
       return;
     }
@@ -224,7 +250,7 @@ export class PmStreamClient {
 
     this.backoffMs = Math.min(
       this.backoffMs * BACKOFF_MULTIPLIER,
-      MAX_BACKOFF_MS
+      this.maxBackoffMs
     );
   }
 }

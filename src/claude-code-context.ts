@@ -34,14 +34,25 @@ export interface RefreshContext {
 
 export const EMPTY_CONTEXT: RefreshContext = { memoryDirs: [], sessionSnippets: [] };
 
-/** EigenFlux plumbing must never feed back into the bio. */
+/**
+ * EigenFlux plumbing must never feed back into the bio. Covers feed payloads
+ * AND the plugin's own nightly prompts: the CLI-assembled refresh/status
+ * prompts land in the transcript as plain user messages (no <channel> tag),
+ * so we match stable phrases from their actual bodies — "due for its daily
+ * refresh" (profile_refresh.go) and "refreshed your EigenFlux bio"
+ * (profile_status.go). Without these, the next night's snippets are the
+ * previous night's prompts, feeding the pipeline back into itself.
+ */
 function isEigenfluxPayload(text: string): boolean {
   return (
     text.includes('Powered by EigenFlux') ||
     text.includes('source="eigenflux"') ||
     text.includes('EigenFlux feed payload') ||
+    text.includes('EIGENFLUX_FEED_PAYLOAD') ||
     text.includes('eigenflux feed poll') ||
-    text.includes('profile refresh-prompt')
+    text.includes('profile refresh-prompt') ||
+    text.includes('due for its daily refresh') ||
+    text.includes('refreshed your EigenFlux bio')
   );
 }
 

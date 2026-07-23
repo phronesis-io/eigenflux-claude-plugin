@@ -7,10 +7,11 @@ import * as path from 'path';
 const PLUGIN_VERSION = '0.0.5';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
-// CLI is older, the channel emits a one-time cli_outdated event so the agent
-// can guide the user through an upgrade (new subcommands like `feed event`
-// silently fail on older CLIs otherwise).
-const EXPECTED_CLI_VERSION = '0.0.17';
+// CLI is older, the channel emits a cli_outdated event so the agent can guide
+// the user through an upgrade (new subcommands silently fail on older CLIs
+// otherwise). 0.0.23 is the first release shipping `profile status-prompt`
+// (Eigenflux commit b0f557b); every other command this plugin calls is older.
+const EXPECTED_CLI_VERSION = '0.0.23';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var
