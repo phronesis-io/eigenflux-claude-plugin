@@ -2,12 +2,30 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-const SKILL_VER = '0.0.5';
+// Single source of truth for the plugin version at runtime. Kept in sync with
+// package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
+const PLUGIN_VERSION = '0.0.5';
 
-function parseInterval(envKey: string, defaultSec: number): number {
-  const raw = process.env[envKey] || String(defaultSec);
+// Minimum eigenflux CLI version this plugin build expects. When the installed
+// CLI is older, the channel emits a cli_outdated event so the agent can guide
+// the user through an upgrade (new subcommands silently fail on older CLIs
+// otherwise). 0.0.23 is the first release shipping `profile status-prompt`
+// (Eigenflux commit b0f557b); every other command this plugin calls is older.
+const EXPECTED_CLI_VERSION = '0.0.23';
+
+// Poll interval: the CLI config key `feed_poll_interval` is the runtime source
+// (read fresh before each scheduling, same as the OpenClaw plugin). The env var
+// is an explicit override that wins when set; DEFAULT applies when the CLI has
+// no value or is unreachable.
+export const DEFAULT_POLL_INTERVAL_SEC = 600;
+export const MIN_POLL_INTERVAL_SEC = 10;
+export const MAX_POLL_INTERVAL_SEC = 24 * 60 * 60;
+
+function parseIntervalOverride(envKey: string): number | null {
+  const raw = process.env[envKey];
+  if (!raw) return null;
   const seconds = parseInt(raw, 10);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : defaultSec;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
 function resolveEigenfluxHome(): string {
@@ -22,7 +40,7 @@ function resolveEigenfluxHome(): string {
 // Set once at module load so all CLI child processes inherit it.
 process.env.EIGENFLUX_HOME = resolveEigenfluxHome();
 if (!process.env.EIGENFLUX_HOST) {
-  process.env.EIGENFLUX_HOST = `claude-code/${SKILL_VER}`;
+  process.env.EIGENFLUX_HOST = `claude-code/${PLUGIN_VERSION}`;
 }
 if (!process.env.EIGENFLUX_CHANNEL) {
   process.env.EIGENFLUX_CHANNEL = 'claude-code';
@@ -49,8 +67,12 @@ if (!process.env.EIGENFLUX_MODEL) {
 }
 
 export const CONFIG = {
-  FEED_POLL_INTERVAL_SEC: parseInterval('EIGENFLUX_FEED_POLL_INTERVAL', 300),
+  // null = no env override → read the CLI config dynamically each cycle.
+  FEED_POLL_INTERVAL_OVERRIDE_SEC: parseIntervalOverride('EIGENFLUX_FEED_POLL_INTERVAL'),
   EIGENFLUX_BIN: process.env.EIGENFLUX_BIN || 'eigenflux',
   EIGENFLUX_SERVER: process.env.EIGENFLUX_SERVER || 'eigenflux',
-  SKILL_VER,
+  PLUGIN_VERSION,
+  EXPECTED_CLI_VERSION,
+  // Legacy alias: the skill bundle rides the plugin version.
+  SKILL_VER: PLUGIN_VERSION,
 } as const;

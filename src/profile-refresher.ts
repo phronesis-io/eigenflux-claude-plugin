@@ -2,9 +2,17 @@
  * Daily profile auto-refresh for EigenFlux.
  *
  * Schedules a timer to fire at a random time between 1:00-5:00 AM local time
- * each day. When triggered, fetches the user's current profile and recent
- * items via existing CLI commands, assembles a prompt, and sends it as a
- * channel notification for Claude to process.
+ * each day. When triggered, gathers the host context (CLAUDE.md memory +
+ * recent session snippets) and asks the host-agnostic CLI core
+ * (`eigenflux profile refresh-prompt`) to assemble the refresh prompt, which
+ * is delivered as a channel notification for Claude to process. After a
+ * delivered bio refresh, chains the daily status broadcast
+ * (`eigenflux profile status-prompt`), auto-publish gated by the user's
+ * `recurring_publish` setting (fail-closed: only an explicit true publishes
+ * without confirmation).
+ *
+ * Prompt wording and memory handling live in the CLI, once, for every host —
+ * this file only schedules, collects context, and delivers.
  *
  * All logging goes to stderr (stdout reserved for MCP stdio transport).
  *
@@ -13,37 +21,24 @@
  */
 
 import { execEigenflux } from './cli-executor.js';
+import { collectClaudeCodeContext, EMPTY_CONTEXT, type RefreshContext } from './claude-code-context.js';
 
 const log = console.error;
 
 const REFRESH_WINDOW_START = 1; // 1:00 AM
 const REFRESH_WINDOW_END = 5;   // 5:00 AM (exclusive)
-const ITEMS_LIMIT = 30;
 
 export interface ProfileRefresherConfig {
   serverName: string;
   eigenfluxBin: string;
   onRefreshPrompt: (prompt: string) => Promise<void>;
+  /** Status-broadcast prompt; auto=true when recurring_publish is on. */
+  onStatusPrompt?: (prompt: string, opts: { auto: boolean }) => Promise<void>;
   onAuthRequired: () => Promise<void>;
-}
-
-interface ProfileData {
-  profile: { agent_name?: string; bio?: string };
-  influence: {
-    total_items?: number;
-    total_consumed?: number;
-    total_scored_1?: number;
-    total_scored_2?: number;
-  };
-}
-
-interface ItemsData {
-  items: Array<{
-    broadcast_type?: string;
-    summary?: string;
-    keywords?: string;
-    total_score?: number;
-  }>;
+  /** Best-effort side task run on every daily tick (e.g. skills sync). */
+  onTick?: () => Promise<void>;
+  /** Injectable for tests; defaults to the Claude Code collector. */
+  collectContext?: () => RefreshContext;
 }
 
 export class ProfileRefresher {
@@ -72,9 +67,9 @@ export class ProfileRefresher {
     log(`[eigenflux:profile-refresh] Stopped`);
   }
 
-  private scheduleNext(): void {
+  private scheduleNext(fromTomorrow = false): void {
     if (!this.running) return;
-    const delay = msUntilNextRefresh(new Date());
+    const delay = msUntilNextRefresh(new Date(), fromTomorrow);
     const target = new Date(Date.now() + delay);
     log(`[eigenflux:profile-refresh] Next refresh at ${target.toLocaleTimeString()} (in ${Math.round(delay / 60_000)}min)`);
     this.timeoutId = setTimeout(async () => {
@@ -84,139 +79,185 @@ export class ProfileRefresher {
       } catch (err) {
         log(`[eigenflux:profile-refresh] Refresh crashed: ${err instanceof Error ? err.message : String(err)}`);
       }
-      this.scheduleNext();
+      // Piggy-back best-effort daily tasks (e.g. skills auto-sync) on the same
+      // once/day cadence, independent of whether the refresh above ran.
+      if (this.config.onTick) {
+        try {
+          await this.config.onTick();
+        } catch (err) {
+          log(`[eigenflux:profile-refresh] Daily tick hook crashed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      // A run that fires inside the 1-5 AM window must NOT reschedule into the
+      // same night (a fresh random pick would land later tonight with ~95%
+      // probability, re-running the refresh AND the status broadcast 2-4x per
+      // night). After any run, the next slot is tomorrow's window.
+      this.scheduleNext(true);
     }, delay);
   }
 
   private async refresh(): Promise<void> {
     log(`[eigenflux:profile-refresh] Running refresh`);
 
-    // CLI `-f json` outputs the unwrapped data directly (no {code,msg,data} envelope)
-    const [profileResult, itemsResult] = await Promise.all([
-      execEigenflux<ProfileData>(
-        this.config.eigenfluxBin,
-        ['profile', 'show', '-s', this.config.serverName, '-f', 'json'],
-      ),
-      execEigenflux<ItemsData>(
-        this.config.eigenfluxBin,
-        ['profile', 'items', '-s', this.config.serverName, '-f', 'json', '--limit', String(ITEMS_LIMIT)],
-      ),
-    ]);
+    // 1. Host context: memory dirs + recent session snippets.
+    let context: RefreshContext = EMPTY_CONTEXT;
+    try {
+      context = (this.config.collectContext ?? collectClaudeCodeContext)() ?? EMPTY_CONTEXT;
+    } catch (err) {
+      log(`[eigenflux:profile-refresh] Context collection failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const { memoryDirs, sessionSnippets } = context;
 
-    // Defensive: if stopped during CLI execution, abort
+    if (memoryDirs.length === 0 && sessionSnippets.length === 0) {
+      log('[eigenflux:profile-refresh] Skipped: no memory/session context');
+      this.telemetry('profile_refresh_telemetry', { outcome: 'skipped_no_context', delivered: false });
+      return;
+    }
+
     if (!this.running) return;
 
-    if (profileResult.kind === 'auth_required' || itemsResult.kind === 'auth_required') {
+    // 2. CLI core assembles the prompt; empty stdout = nothing to refresh from.
+    const result = await execEigenflux<string>(
+      this.config.eigenfluxBin,
+      [
+        'profile', 'refresh-prompt', '-s', this.config.serverName,
+        ...memoryDirs.flatMap((d) => ['--memory-dir', d]),
+        ...sessionSnippets.flatMap((s) => ['--session-snippet', s]),
+      ],
+      { parseJson: false }
+    );
+
+    if (!this.running) return;
+
+    if (result.kind === 'auth_required') {
+      this.telemetry('profile_refresh_telemetry', { outcome: 'auth_required', delivered: false });
       await this.config.onAuthRequired();
       return;
     }
-    if (profileResult.kind !== 'success') {
-      log(`[eigenflux:profile-refresh] Profile fetch failed: ${profileResult.kind}`);
-      return;
-    }
-    if (itemsResult.kind !== 'success') {
-      log(`[eigenflux:profile-refresh] Items fetch failed: ${itemsResult.kind}`);
+    if (result.kind !== 'success') {
+      log(`[eigenflux:profile-refresh] refresh-prompt failed: ${result.kind}`);
+      this.telemetry('profile_refresh_telemetry', { outcome: result.kind, delivered: false });
       return;
     }
 
-    const profileData = profileResult.data;
-    if (!profileData) {
-      log(`[eigenflux:profile-refresh] Profile fetch returned empty data`);
+    const prompt = (result.data ?? '').trim();
+    if (!prompt) {
+      log('[eigenflux:profile-refresh] Skipped: CLI produced no prompt');
+      this.telemetry('profile_refresh_telemetry', { outcome: 'skipped_no_context', delivered: false });
       return;
     }
 
-    const items = itemsResult.data?.items ?? [];
-    if (items.length === 0) {
-      log(`[eigenflux:profile-refresh] Skipped: no recent items`);
-      return;
-    }
-
-    const prompt = buildRefreshPrompt(profileData, items);
+    // 3. Deliver.
+    let bioDelivered = false;
     try {
       if (!this.running) return;
       await this.config.onRefreshPrompt(prompt);
+      bioDelivered = true;
       log(`[eigenflux:profile-refresh] Prompt delivered`);
+      this.telemetry('profile_refresh_telemetry', { outcome: 'delivered', delivered: true });
     } catch (err) {
       log(`[eigenflux:profile-refresh] Delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.telemetry('profile_refresh_telemetry', { outcome: 'delivery_failed', delivered: false });
+    }
+
+    // 4. Chain the daily status broadcast — only after the bio was delivered,
+    // so the broadcast reflects the freshly-updated identity. Best-effort.
+    if (bioDelivered) {
+      await this.maybeBroadcastStatus(memoryDirs, sessionSnippets);
+    }
+  }
+
+  private async maybeBroadcastStatus(memoryDirs: string[], sessionSnippets: string[]): Promise<void> {
+    if (!this.config.onStatusPrompt) return;
+    try {
+      if (!this.running) return;
+
+      // Fail-closed: default to draft-and-confirm. Auto-publish sends the
+      // user's status to the public network without review, so an unreadable
+      // setting must never enable it — only an explicit true does.
+      let auto = false;
+      try {
+        const r = await execEigenflux<string>(
+          this.config.eigenfluxBin,
+          ['config', 'get', '--key', 'recurring_publish', '-s', this.config.serverName],
+          { parseJson: false }
+        );
+        auto = r.kind === 'success' && (r.data ?? '').trim().toLowerCase() === 'true';
+      } catch {
+        // keep auto=false
+      }
+
+      // Pass the bool as `--auto-publish=<bool>` (single arg): cobra bool
+      // flags don't consume the next token, so the space form would silently
+      // coerce to true and flip an OFF user into auto-publish.
+      const result = await execEigenflux<string>(
+        this.config.eigenfluxBin,
+        [
+          'profile', 'status-prompt', '-s', this.config.serverName,
+          `--auto-publish=${auto}`,
+          ...memoryDirs.flatMap((d) => ['--memory-dir', d]),
+          ...sessionSnippets.flatMap((s) => ['--session-snippet', s]),
+        ],
+        { parseJson: false }
+      );
+
+      if (!this.running) return;
+
+      if (result.kind === 'auth_required') {
+        this.telemetry('status_broadcast_telemetry', { outcome: 'auth_required', auto, delivered: false });
+        await this.config.onAuthRequired();
+        return;
+      }
+      if (result.kind !== 'success') {
+        log(`[eigenflux:profile-refresh] status-prompt failed: ${result.kind}`);
+        this.telemetry('status_broadcast_telemetry', { outcome: result.kind, auto, delivered: false });
+        return;
+      }
+
+      const prompt = (result.data ?? '').trim();
+      if (!prompt) {
+        this.telemetry('status_broadcast_telemetry', { outcome: 'skipped_no_context', auto, delivered: false });
+        return;
+      }
+
+      if (!this.running) return;
+      try {
+        await this.config.onStatusPrompt(prompt, { auto });
+        log(`[eigenflux:profile-refresh] Status broadcast prompt delivered (auto=${auto})`);
+        this.telemetry('status_broadcast_telemetry', { outcome: 'delivered', auto, delivered: true });
+      } catch (err) {
+        log(`[eigenflux:profile-refresh] Status delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+        this.telemetry('status_broadcast_telemetry', { outcome: 'delivery_failed', auto, delivered: false });
+      }
+    } catch (err) {
+      log(`[eigenflux:profile-refresh] Status broadcast step crashed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** One grep-able structured line per attempt. Never throws. */
+  private telemetry(tag: string, fields: Record<string, unknown>): void {
+    try {
+      log(`[eigenflux:profile-refresh] ${tag} ${JSON.stringify({ server: this.config.serverName, ...fields })}`);
+    } catch {
+      // telemetry must never break the loop
     }
   }
 }
 
-export function msUntilNextRefresh(now: Date): number {
+/**
+ * Milliseconds until a random time in the [1:00, 5:00) AM local window.
+ * `fromTomorrow` pins the pick to tomorrow's window regardless of the current
+ * time — used after a completed run so one night never fires twice.
+ */
+export function msUntilNextRefresh(now: Date, fromTomorrow = false): number {
   const target = new Date(now);
+  if (fromTomorrow) {
+    target.setDate(target.getDate() + 1);
+  }
   const hour = REFRESH_WINDOW_START + Math.floor(Math.random() * (REFRESH_WINDOW_END - REFRESH_WINDOW_START));
   target.setHours(hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60), 0);
   if (target.getTime() <= now.getTime()) {
     target.setDate(target.getDate() + 1);
   }
   return target.getTime() - now.getTime();
-}
-
-function buildRefreshPrompt(profile: ProfileData, items: ItemsData['items']): string {
-  const name = profile.profile?.agent_name ?? '(unknown)';
-  const bio = profile.profile?.bio || '(empty)';
-  const totalItems = profile.influence?.total_items ?? 0;
-  const totalConsumed = profile.influence?.total_consumed ?? 0;
-  const totalScored = (profile.influence?.total_scored_1 ?? 0) + (profile.influence?.total_scored_2 ?? 0);
-
-  const lines: string[] = [
-    'Your EigenFlux profile is due for its daily refresh. This is a background',
-    'maintenance TASK you must actively perform — it is NOT an EigenFlux feed',
-    'item, so do NOT respond with NO_REPLY and do NOT skim and dismiss it.',
-    'Keep it quiet (no commentary, no questions, no summary back to the user),',
-    'but quiet means "do not narrate" — NOT "skip the work". You must assess the',
-    'bio, then EITHER run the update, OR finish with a single internal line on',
-    'why no update is warranted. Never finish without having assessed.',
-    '',
-    '## Current Profile',
-    `- Name: ${name}`,
-    `- Bio: ${bio}`,
-    `- Influence: ${totalItems} items published, ${totalConsumed} consumed, ${totalScored} scored`,
-    '',
-    '## Recent Broadcasts',
-  ];
-
-  for (const item of items) {
-    const summary = item.summary || '(no summary)';
-    let line = `- [${item.broadcast_type ?? 'unknown'}] ${summary}`;
-    if (item.keywords) line += ` (keywords: ${item.keywords})`;
-    if (item.total_score && item.total_score > 0) line += ` (score: ${item.total_score})`;
-    lines.push(line);
-  }
-
-  lines.push(
-    '',
-    '## Additional Sources (beyond broadcasts)',
-    'You are running inside the user\'s live session, so also draw on:',
-    '- **Your CLAUDE.md memory** — durable facts about their role, expertise, goals.',
-    '- **This session\'s context** — what they are currently working on.',
-    'These are higher-signal than broadcasts; weight them first.',
-    '',
-    '## Privacy (hard rule)',
-    'Memory and session context may contain private or sensitive details. Use them',
-    'ONLY to shape a public-facing bio. NEVER copy secrets, credentials, private',
-    'names, or verbatim private content into the bio. When in doubt, generalize.',
-    '',
-    '## Instructions',
-    '1. Write a concise bio (2-4 sentences) reflecting current focus areas and expertise.',
-    '2. Blend signals: memory + this session first, then recent broadcasts.',
-    '   Within broadcasts, favor your highest-scoring items (see score above) and the',
-    '   total_scored counts — they reflect what the network actually values from you.',
-    '3. Preserve still-relevant info from the current bio.',
-    '4. Bias toward updating: run the update if focus, recent work, or expertise',
-    '   has shifted at all. Only skip the bio update when the current bio already',
-    '   reflects your latest activity — and even then, assess first, do not skip blindly.',
-    '   (Always still do the runtime report below.)',
-    '5. To update, run (source flags power refresh telemetry / bio history):',
-    '   eigenflux profile update --bio "YOUR NEW BIO" \\',
-    '     --source "<comma-separated of: memory,session,broadcast>" \\',
-    '     --note "<one short line: what changed and why>"',
-    '',
-    '## Nightly runtime report (always do this, even if the bio is unchanged)',
-    'Report the model you run as. Substitute your real model id:',
-    '   eigenflux settings push --model "<your model id, e.g. claude-opus-4-8>"',
-    `(The agent name "${name}" is already on record; no need to change it unless wrong.)`,
-  );
-
-  return lines.join('\n');
 }

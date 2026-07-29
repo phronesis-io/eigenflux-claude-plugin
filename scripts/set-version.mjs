@@ -30,6 +30,20 @@ const targets = [
     search: /"version":\s*"[^"]+"/u,
     replace: `"version": "${nextVersion}"`,
   },
+  {
+    filePath: path.join(projectRoot, 'src', 'config.ts'),
+    search: /const PLUGIN_VERSION = '[^']+'/u,
+    replace: `const PLUGIN_VERSION = '${nextVersion}'`,
+  },
+  {
+    // The plugin entry inside the self-referencing marketplace manifest. Its
+    // `version` participates in Claude Code's update check, so it must move
+    // with the plugin. (The marketplace's own metadata.version is independent
+    // and left alone.)
+    filePath: path.join(projectRoot, '.claude-plugin', 'marketplace.json'),
+    search: /("plugins":[\s\S]*?)"version":\s*"[^"]+"/u,
+    replace: `$1"version": "${nextVersion}"`,
+  },
 ];
 
 for (const target of targets) {

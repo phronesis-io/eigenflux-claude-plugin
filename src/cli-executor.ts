@@ -20,6 +20,31 @@ export type CliResult<T> =
 export interface ExecOptions {
   timeout?: number;
   cwd?: string;
+  /**
+   * When false, return trimmed stdout as-is instead of JSON-parsing it. For
+   * plain-text commands (`profile refresh-prompt`, `settings push`, …).
+   * Defaults to true.
+   */
+  parseJson?: boolean;
+}
+
+// Flags whose values carry free text from the user's sessions/memory. Their
+// values must never reach the exec log: Claude Code persists this process's
+// stderr to disk (mcp-logs-*), so logging them verbatim would copy session
+// transcript excerpts — potentially containing pasted secrets — into a
+// second, long-lived plaintext location.
+const REDACTED_VALUE_FLAGS = new Set(['--session-snippet']);
+
+export function formatArgsForLog(args: string[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    out.push(args[i]);
+    if (REDACTED_VALUE_FLAGS.has(args[i]) && i + 1 < args.length) {
+      out.push(`<redacted ${args[i + 1].length} chars>`);
+      i++;
+    }
+  }
+  return out.join(' ');
 }
 
 export function execEigenflux<T>(
@@ -30,7 +55,7 @@ export function execEigenflux<T>(
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
 
   return new Promise((resolve) => {
-    log(`[eigenflux:cli] exec: ${bin} ${args.join(' ')}`);
+    log(`[eigenflux:cli] exec: ${bin} ${formatArgsForLog(args)}`);
 
     execFile(
       bin,
@@ -77,6 +102,10 @@ export function execEigenflux<T>(
         }
 
         const trimmed = stdout.trim();
+        if (options?.parseJson === false) {
+          resolve({ kind: 'success', data: trimmed as unknown as T });
+          return;
+        }
         if (!trimmed) {
           resolve({
             kind: 'success',

@@ -77,24 +77,37 @@ test('always returns positive delay', () => {
   }
 });
 
-// ─── buildRefreshPrompt (via dynamic import) ────────────────────────────────
+test('fromTomorrow never lands in the same night, even mid-window', () => {
+  // A run firing at 1:10 AM must reschedule to tomorrow's window — a plain
+  // re-pick would land later tonight with ~95% probability.
+  for (let i = 0; i < 50; i++) {
+    const now = new Date(2026, 4, 27, 1, 10, 0);
+    const delay = msUntilNextRefresh(now, true);
+    const target = new Date(now.getTime() + delay);
+    assert.equal(target.getDate(), 28, `target must be tomorrow, got date ${target.getDate()}`);
+    assert.ok(target.getHours() >= 1 && target.getHours() < 5,
+      `hour ${target.getHours()} outside [1,5)`);
+  }
+});
 
-console.log('\nbuildRefreshPrompt');
+// ─── Context collection (CLI-core inputs) ───────────────────────────────────
 
-// We can't easily import the private function, so test via the full module
-// by checking the prompt structure expectations
+console.log('\ncollectClaudeCodeContext');
 
-test('prompt includes profile and broadcast data', () => {
-  // This validates the expected prompt format documented in the code
-  const expectedSections = [
-    '## Current Profile',
-    '## Recent Broadcasts',
-    '## Instructions',
-    'eigenflux profile update --bio',
-  ];
-  // Just validate the constants/format are correct
-  for (const section of expectedSections) {
-    assert.ok(section.length > 0);
+// Prompt assembly moved into the CLI (`eigenflux profile refresh-prompt`);
+// the plugin only supplies memory dirs + session snippets. Verify the
+// collector is defensive: it must never throw, and always return the shape
+// the refresher consumes.
+
+const { collectClaudeCodeContext } = await import('../src/claude-code-context.ts');
+
+test('collector never throws and returns the RefreshContext shape', () => {
+  const ctx = collectClaudeCodeContext();
+  assert.ok(Array.isArray(ctx.memoryDirs), 'memoryDirs is an array');
+  assert.ok(Array.isArray(ctx.sessionSnippets), 'sessionSnippets is an array');
+  for (const s of ctx.sessionSnippets) {
+    assert.equal(typeof s, 'string');
+    assert.ok(s.length <= 280, 'snippets are capped at 280 chars');
   }
 });
 
