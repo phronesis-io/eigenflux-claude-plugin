@@ -21,6 +21,17 @@ test('uses the backend-delivered contract and strips it from the echoed payload'
   expect(out.slice(out.indexOf('Payload:'))).not.toContain('output_contract');
 });
 
+test('explicit empty contract injects no rules and no fallback', () => {
+  // Present-but-empty is the server saying "this payload needs no output
+  // rules" (the common empty-poll case) — falling back would reinstate the
+  // very rules the server withheld.
+  const out = buildFeedContent(feed({ output_contract: '' }));
+
+  expect(out).not.toContain('OUTPUT CONTRACT');
+  expect(out).toContain('Payload:');
+  expect(out.slice(out.indexOf('Payload:'))).not.toContain('output_contract');
+});
+
 test('falls back to a non-empty contract when the server omits the field', () => {
   const out = buildFeedContent(feed({}));
 

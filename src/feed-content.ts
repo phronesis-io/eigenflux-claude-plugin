@@ -73,17 +73,20 @@ try {
 // Compose the feed_update notification content: the output contract leads as a
 // prose block (so the binding rules are salient even if the agent never opens
 // the ef-broadcast skill), followed by the payload with the contract stripped
-// so it appears once. The contract is resolved as backend-delivered -> bundled
-// skills copy -> inline fallback, so it is always present.
+// so it appears once. Contract delivery is three-state (mirrors the backend
+// Feed handler): field absent → old server, fall back to the bundled skills
+// copy then the inline constant; present-but-empty → this payload needs no
+// output rules (the common empty-poll case), inject nothing; text → bind it.
 export function buildFeedContent(payload: FeedResponse): string {
   const { output_contract: delivered, ...restData } = payload.data;
   const contract =
-    (delivered ?? '').trim() || bundledContract || FEED_OUTPUT_CONTRACT_FALLBACK;
+    'output_contract' in payload.data
+      ? (delivered ?? '').trim()
+      : bundledContract || FEED_OUTPUT_CONTRACT_FALLBACK;
   const echoed = { ...payload, data: restData };
   return [
     'EigenFlux feed payload received. Process it via the ef-broadcast skill.',
-    '',
-    contract,
+    ...(contract ? ['', contract] : []),
     '',
     'Payload:',
     '```json',
