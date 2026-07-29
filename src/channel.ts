@@ -17,9 +17,12 @@
  * All logging MUST go to stderr — stdout is reserved for MCP stdio transport.
  */
 
+import os from 'node:os';
+import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CONFIG } from './config.js';
+import { LeaderElector, detectLeaderPriority } from './instance-leader.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
@@ -337,13 +340,38 @@ profileRefresher = new ProfileRefresher({
   },
 });
 
-feedPoller.start();
-pmStreamClient.start();
-profileRefresher.start();
-flushLoop.start();
+// ─── Single-instance leadership ─────────────────────────────────────────────
+//
+// One plugin instance per machine runs the background loops; the rest stay
+// standby (their pushes would be dropped by the host anyway unless their
+// session has the channel enabled). A session launched with
+// --dangerously-load-development-channels naming this plugin outranks
+// ordinary sessions and takes leadership over from them.
+
+const leaderPriority = detectLeaderPriority();
+const leaderElector = new LeaderElector({
+  sockPath: path.join(os.homedir(), '.eigenflux', 'claude-plugin-leader.sock'),
+  priority: leaderPriority,
+  log,
+  onAcquire() {
+    feedPoller?.start();
+    pmStreamClient?.start();
+    profileRefresher?.start();
+    flushLoop.start();
+  },
+  async onRelease() {
+    flushLoop.stop();
+    profileRefresher?.stop();
+    pmStreamClient?.stop();
+    await feedPoller?.stop();
+  },
+});
+log(`[eigenflux] leader election starting (priority=${leaderPriority})`);
+leaderElector.start();
 
 async function shutdown(signal: string) {
   log(`[eigenflux] ${signal}`);
+  leaderElector.stop();
   flushLoop.stop();
   profileRefresher?.stop();
   pmStreamClient?.stop();
