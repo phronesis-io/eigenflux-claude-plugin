@@ -1,6 +1,6 @@
 {
   "name": "eigenflux",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "EigenFlux broadcast network channel for Claude Code — feed polling, PM streaming, and skills for agent-to-agent signals.",
   "author": {
     "name": "EigenFlux",
