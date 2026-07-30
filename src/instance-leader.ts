@@ -24,6 +24,18 @@
  *   peer:    "PEER <priority>\n"     reply, then close
  * A leader that reads a peer priority greater than its own abdicates.
  *
+ * Stale-lock reclamation: a leader whose process exits cleanly closes the fd,
+ * so a standby's connect() gets ECONNREFUSED and reclaims immediately. But a
+ * leader whose process is merely *frozen* (e.g. shell job control SIGSTOP's
+ * it when the user backgrounds the terminal tab) still holds the fd open —
+ * the kernel accepts the standby's connect() into the listen backlog even
+ * though nothing will ever call accept()/write() on it, so the standby sees
+ * a connect *timeout*, not a connect *error*. A single timeout is therefore
+ * ambiguous (could be a slow GC pause) and is not treated as stale; only
+ * `staleAfterStrikes` *consecutive* timeouts — with no successful handshake
+ * in between — are treated as a dead-equivalent leader and reclaimed the
+ * same way as a confirmed ECONNREFUSED.
+ *
  * All logging goes through the injected `log` (stderr in the plugin).
  */
 
@@ -83,6 +95,10 @@ export interface LeaderElectorOptions {
   retryMs?: number;
   /** Retry interval right after asking a lower-priority leader to abdicate. */
   preemptRetryMs?: number;
+  /** How long a single probe waits for the holder to respond before counting it as a timeout strike. */
+  probeTimeoutMs?: number;
+  /** Consecutive probe timeouts (no successful handshake in between) before the lock is treated as stale and reclaimed. */
+  staleAfterStrikes?: number;
 }
 
 export class LeaderElector {
@@ -91,12 +107,16 @@ export class LeaderElector {
   private retryTimer: NodeJS.Timeout | null = null;
   private stopped = false;
   private abdicating = false;
+  /** Consecutive unanswered probes against the current holder; reset on any successful handshake. */
+  private staleStrikes = 0;
 
   constructor(opts: LeaderElectorOptions) {
     this.opts = {
       log: () => {},
       retryMs: 15_000,
       preemptRetryMs: 2_000,
+      probeTimeoutMs: 3_000,
+      staleAfterStrikes: 2,
       ...opts,
     };
   }
@@ -169,14 +189,26 @@ export class LeaderElector {
     const conn = net.connect(this.opts.sockPath);
     let leaderPriority: number | null = null;
     let buffer = '';
-    conn.setTimeout(3_000);
+    conn.setTimeout(this.opts.probeTimeoutMs);
 
     const finish = (retryMs: number) => {
       conn.destroy();
       this.scheduleRetry(retryMs);
     };
 
+    // Nobody home: the previous holder is gone or unresponsive. Remove the
+    // stale socket and re-contend immediately. If two standbys race here,
+    // the loser just hits EADDRINUSE and goes back to standby.
+    const reclaimStale = (reason: string) => {
+      this.opts.log(`[eigenflux:leader] standby: reclaiming stale lock (${reason})`);
+      try { fs.unlinkSync(this.opts.sockPath); } catch { /* raced */ }
+      conn.destroy();
+      this.staleStrikes = 0;
+      if (!this.stopped) this.attempt();
+    };
+
     conn.on('data', (chunk) => {
+      this.staleStrikes = 0;
       buffer += chunk.toString();
       const line = buffer.split('\n')[0];
       if (!buffer.includes('\n')) return;
@@ -191,15 +223,20 @@ export class LeaderElector {
         finish(this.opts.retryMs);
       }
     });
-    conn.on('timeout', () => finish(this.opts.retryMs));
-    conn.on('error', () => {
-      // Nobody home: the previous leader died without unlinking. Remove the
-      // stale socket and re-contend immediately. If two standbys race here,
-      // the loser just hits EADDRINUSE and goes back to standby.
-      try { fs.unlinkSync(this.opts.sockPath); } catch { /* raced */ }
-      conn.destroy();
-      if (!this.stopped) this.attempt();
+    conn.on('timeout', () => {
+      // Connect() can succeed into the kernel backlog even when the holder
+      // process can't run at all (e.g. SIGSTOP'd) — that reads as a silent
+      // timeout here, not a connection error. One timeout is ambiguous (could
+      // be a slow GC pause); only sustained silence across consecutive probes
+      // is treated as dead-equivalent.
+      this.staleStrikes++;
+      if (this.staleStrikes >= this.opts.staleAfterStrikes) {
+        reclaimStale(`${this.staleStrikes} consecutive unresponsive probes`);
+        return;
+      }
+      finish(this.opts.retryMs);
     });
+    conn.on('error', () => reclaimStale('connection refused'));
   }
 
   /** Leader side of the handshake. */
