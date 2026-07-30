@@ -1,5 +1,6 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { LeaderElector } from './instance-leader.js';
@@ -27,7 +28,12 @@ interface Harness {
   released: number;
 }
 
-function makeElector(sockPath: string, priority: number, retryMs = 100): Harness {
+function makeElector(
+  sockPath: string,
+  priority: number,
+  retryMs = 100,
+  extra: Record<string, unknown> = {},
+): Harness {
   const h: Partial<Harness> = { acquired: 0, released: 0 };
   h.elector = new LeaderElector({
     sockPath,
@@ -36,6 +42,7 @@ function makeElector(sockPath: string, priority: number, retryMs = 100): Harness
     preemptRetryMs: 50,
     onAcquire: () => { h.acquired!++; },
     onRelease: () => { h.released!++; },
+    ...extra,
   });
   return h as Harness;
 }
@@ -120,5 +127,28 @@ describe('LeaderElector', () => {
     b.elector.start();
     await waitFor(() => b.elector.isLeader);
     expect(b.acquired).toBe(1);
+  });
+
+  test('frozen holder (fd open, never responds) is reclaimed after repeated timeouts', async () => {
+    const sock = tmpSock();
+    // Simulate a SIGSTOP'd leader: the listening socket is real, so connect()
+    // succeeds into the kernel backlog, but nothing ever services the
+    // connection — no 'LEADER' line ever arrives, mirroring a process frozen
+    // by shell job control rather than one that actually exited.
+    const frozen = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      frozen.once('error', reject);
+      frozen.listen(sock, () => resolve());
+    });
+
+    const b = makeElector(sock, 1, 50, { probeTimeoutMs: 50, staleAfterStrikes: 2 });
+    register(sock, b);
+    b.elector.start();
+    // Two probe cycles at ~50ms timeout + ~50ms retry each — bounded, not the
+    // old infinite standby.
+    await waitFor(() => b.elector.isLeader, 3_000);
+    expect(b.acquired).toBe(1);
+
+    frozen.close();
   });
 });
