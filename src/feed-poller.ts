@@ -10,11 +10,12 @@
  */
 
 import type { FeedResponse } from './types.js';
-import { execEigenflux } from './cli-executor.js';
+import { execEigenflux, type CliResult, type ExecOptions } from './cli-executor.js';
 import { readPollIntervalSec } from './poll-interval.js';
 import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
 
 const log = console.error;
+export type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise<CliResult<T>>;
 
 export interface FeedPollerConfig {
   serverName: string;
@@ -31,8 +32,12 @@ export interface FeedPollerConfig {
    * on the next poll instead of going permanently silent.
    */
   onCliMissing?: () => Promise<void>;
+  /** Runs the current thin Heartbeat contract before each feed poll. */
+  onHeartbeatStart?: () => Promise<void>;
   /** Fired after every successful poll, including empty feeds. Best-effort. */
   onPollSuccess?: () => void;
+  /** Test seam; production uses the shared CLI executor. */
+  exec?: ExecFn;
 }
 
 // Guard: notifier delivery may take longer than the poll interval,
@@ -119,9 +124,19 @@ export class FeedPoller {
 
   async pollOnce(): Promise<FeedResponse | null> {
     try {
+      if (this.config.onHeartbeatStart) {
+        try {
+          await this.config.onHeartbeatStart();
+        } catch (error) {
+          log(
+            `[eigenflux:feed] onHeartbeatStart hook error: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
       log(`[eigenflux:feed] Polling via CLI for server=${this.config.serverName}`);
 
-      const result = await execEigenflux<FeedResponse['data']>(
+      const result = await (this.config.exec ?? execEigenflux)<FeedResponse['data']>(
         this.config.eigenfluxBin,
         ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json']
       );
