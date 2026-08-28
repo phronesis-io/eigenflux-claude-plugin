@@ -31,6 +31,7 @@ import { FeedbackFlushLoop } from './feedback-flush-loop.js';
 import { getInstalledCliVersion, isCliOutdated } from './cli-version.js';
 import { execEigenflux } from './cli-executor.js';
 import { buildFeedContent } from './feed-content.js';
+import { HeartbeatPlanRunner } from './heartbeat-plan-runner.js';
 
 // Stderr is captured by the MCP client (e.g. Claude Code stores it per-session
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
@@ -230,6 +231,10 @@ void startupSync.then(async ({ notInstalled }) => {
 // ─── Per-poll piggyback tasks ───────────────────────────────────────────────
 
 const settingsReporter = new SettingsReporter(CONFIG.EIGENFLUX_BIN, CONFIG.EIGENFLUX_SERVER);
+const heartbeatPlanRunner = new HeartbeatPlanRunner(
+  CONFIG.EIGENFLUX_BIN,
+  CONFIG.EIGENFLUX_HOME
+);
 const flushLoop = new FeedbackFlushLoop({
   serverName: CONFIG.EIGENFLUX_SERVER,
   eigenfluxBin: CONFIG.EIGENFLUX_BIN,
@@ -268,6 +273,9 @@ feedPoller = new FeedPoller({
   },
   async onCliMissing() {
     await sendCliRequired();
+  },
+  async onHeartbeatStart() {
+    await heartbeatPlanRunner.run();
   },
   onPollSuccess() {
     // CLI is demonstrably present: close the missing-episode and complete a
