@@ -4,13 +4,14 @@ import * as path from 'path';
 
 // Single source of truth for the plugin version at runtime. Kept in sync with
 // package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
-const PLUGIN_VERSION = '0.0.10';
+const PLUGIN_VERSION = '0.0.11';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
 // the user through an upgrade (new subcommands silently fail on older CLIs
-// otherwise). 0.0.34 is the first release shipping `heartbeat plan`.
-const EXPECTED_CLI_VERSION = '0.0.34';
+// otherwise). 0.0.23 is the first release shipping `profile status-prompt`
+// (Eigenflux commit b0f557b); every other command this plugin calls is older.
+const EXPECTED_CLI_VERSION = '0.0.23';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var
@@ -70,7 +71,6 @@ export const CONFIG = {
   FEED_POLL_INTERVAL_OVERRIDE_SEC: parseIntervalOverride('EIGENFLUX_FEED_POLL_INTERVAL'),
   EIGENFLUX_BIN: process.env.EIGENFLUX_BIN || 'eigenflux',
   EIGENFLUX_SERVER: process.env.EIGENFLUX_SERVER || 'eigenflux',
-  EIGENFLUX_HOME: process.env.EIGENFLUX_HOME as string,
   PLUGIN_VERSION,
   EXPECTED_CLI_VERSION,
   // Legacy alias: the skill bundle rides the plugin version.
