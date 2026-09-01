@@ -4,7 +4,7 @@ import * as path from 'path';
 
 // Single source of truth for the plugin version at runtime. Kept in sync with
 // package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
-const PLUGIN_VERSION = '0.0.9';
+const PLUGIN_VERSION = '0.0.10';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
