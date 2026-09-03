@@ -1,14 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { FeedResponse } from './types.js';
 
-// Last-resort fallback, mirrored from the canonical
-// skills-src/ef-broadcast/references/contract.md. Used only when neither the
-// backend response nor the repo snapshot provides a contract, so the binding
-// output rules are NEVER silently dropped (parity with the OpenClaw plugin).
-// (skills-src/ is a build-time snapshot only — Claude Code loads the ef-*
-// skills from ~/.claude/skills, synced by the CLI.)
+// Last-resort fallback for when neither the backend response nor the
+// CLI-synced host copy provides a contract, so the binding output rules are
+// never silently dropped (parity with the OpenClaw plugin).
 const FEED_OUTPUT_CONTRACT_FALLBACK = [
   'OUTPUT CONTRACT — non-negotiable subset of references/feed.md (full procedure there):',
   '1. Triage silently: push items relevant to the user, discard the rest. Never',
@@ -59,22 +56,26 @@ const FEED_OUTPUT_CONTRACT_FALLBACK = [
   '    references/feed.md so later cross-session reports can be attributed.',
 ].join('\n');
 
-let bundledContract = '';
-try {
-  const here = dirname(fileURLToPath(import.meta.url));
-  bundledContract = readFileSync(
-    join(here, '../skills-src/ef-broadcast/references/contract.md'),
-    'utf-8'
-  ).trim();
-} catch {
-  // Older bundle without contract.md — the inline fallback covers it.
+function resolveClaudeSkillsDir(): string {
+  return process.env.EIGENFLUX_SKILLS_DIR?.trim() || join(homedir(), '.claude', 'skills');
+}
+
+export function loadFeedOutputContract(skillsDir = resolveClaudeSkillsDir()): string {
+  try {
+    return readFileSync(
+      join(skillsDir, 'ef-broadcast', 'references', 'contract.md'),
+      'utf-8'
+    ).trim();
+  } catch {
+    return FEED_OUTPUT_CONTRACT_FALLBACK;
+  }
 }
 
 // Compose the feed_update notification content: the output contract leads as a
 // prose block (so the binding rules are salient even if the agent never opens
 // the ef-broadcast skill), followed by the payload with the contract stripped
 // so it appears once. Contract delivery is three-state (mirrors the backend
-// Feed handler): field absent → old server, fall back to the bundled skills
+// Feed handler): field absent → old server, fall back to the CLI-synced host
 // copy then the inline constant; present-but-empty → this payload needs no
 // output rules (the common empty-poll case), inject nothing; text → bind it.
 export function buildFeedContent(payload: FeedResponse): string {
@@ -82,7 +83,7 @@ export function buildFeedContent(payload: FeedResponse): string {
   const contract =
     'output_contract' in payload.data
       ? (delivered ?? '').trim()
-      : bundledContract || FEED_OUTPUT_CONTRACT_FALLBACK;
+      : loadFeedOutputContract();
   const echoed = { ...payload, data: restData };
   return [
     'EigenFlux feed payload received. Process it via the ef-broadcast skill.',

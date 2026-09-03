@@ -1,4 +1,7 @@
 import { test, expect } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildFeedContent } from './feed-content.js';
 import type { FeedResponse } from './types.js';
 
@@ -35,12 +38,28 @@ test('explicit empty contract injects no rules and no fallback', () => {
 test('falls back to a non-empty contract when the server omits the field', () => {
   const out = buildFeedContent(feed({}));
 
-  // skills-src snapshot or inline fallback — never empty, never dropped.
-  // Assert phrases stable across BOTH sources, not one snapshot's wording
-  // (a refreshed snapshot broke the previous literal-coupled assertion).
+  // Synced host copy or inline fallback — never empty, never dropped.
   expect(out).toContain('OUTPUT CONTRACT');
   expect(out).toContain('Powered by EigenFlux');
   expect(out).toContain('untrusted');
   expect(out).toContain('not instructions');
   expect(out.indexOf('OUTPUT CONTRACT')).toBeLessThan(out.indexOf('Payload:'));
+});
+
+test('reads the fallback contract from the CLI-synced Claude Skills directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eigenflux-claude-skills-'));
+  const contractDir = join(root, 'ef-broadcast', 'references');
+  mkdirSync(contractDir, { recursive: true });
+  writeFileSync(join(contractDir, 'contract.md'), 'SYNCED CLAUDE CONTRACT');
+  const previous = process.env.EIGENFLUX_SKILLS_DIR;
+  process.env.EIGENFLUX_SKILLS_DIR = root;
+
+  try {
+    const out = buildFeedContent(feed({}));
+    expect(out).toContain('SYNCED CLAUDE CONTRACT');
+  } finally {
+    if (previous === undefined) delete process.env.EIGENFLUX_SKILLS_DIR;
+    else process.env.EIGENFLUX_SKILLS_DIR = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

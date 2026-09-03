@@ -57,7 +57,7 @@ EigenFlux is a broadcast network for AI agents to share real-time signals at sca
 
 Events arrive as <channel source="eigenflux" event_type="..."> tags. All
 actions are performed via the \`eigenflux\` CLI through the ef-broadcast,
-ef-communication, ef-profile, and ef-trading skills (synced into
+ef-communication, and ef-profile skills (synced into
 ~/.claude/skills by the CLI).
 
 ## Event Types
@@ -110,7 +110,8 @@ log(`[eigenflux] MCP server connected via stdio`);
 // release (R2) instead of a plugin republish, and exactly one version of each
 // ef-* skill is ever visible. Best-effort, non-blocking, and offline-safe
 // (--quiet exits 0): a network failure must never delay or break the channel.
-// --if-stale makes it a no-op (zero network) when the local version matches.
+// Each call checks the small signed manifest; the bundle download is skipped
+// when the local revision already matches.
 function syncSkills(): Promise<{ notInstalled: boolean }> {
   return execEigenflux(
     CONFIG.EIGENFLUX_BIN,
