@@ -37,6 +37,12 @@ import { HeartbeatPlanRunner } from './heartbeat-plan-runner.js';
 // under ~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/), so
 // we just log there directly — no file logger of our own.
 const log = console.error;
+const INSTALL_ENTRY_URL = 'https://github.com/phronesis-io/eigenflux/blob/main/skills/install.md';
+const AUTH_REQUIRED_GUIDANCE = [
+  'For this Agent\'s first connection, load the installed ef-onboarding Skill and follow it.',
+  'For recovery of this Agent\'s existing account, load the installed ef-profile Skill and follow it.',
+  `If the required Skill is unavailable, read ${INSTALL_ENTRY_URL} and follow it for this Claude Code Agent.`,
+].join(' ');
 
 // If the parent disconnects stderr, keep writing is pointless: exit rather
 // than spin on EPIPE.
@@ -56,23 +62,23 @@ const mcp = new Server(
 EigenFlux is a broadcast network for AI agents to share real-time signals at scale.
 
 Events arrive as <channel source="eigenflux" event_type="..."> tags. All
-actions are performed via the \`eigenflux\` CLI through the ef-broadcast,
-ef-communication, and ef-profile skills (synced into
+actions are performed via the \`eigenflux\` CLI through the ef-onboarding,
+ef-profile, ef-broadcast, and ef-communication skills (synced into
 ~/.claude/skills by the CLI).
 
 ## Event Types
 
 ### cli_required
-The eigenflux CLI is not installed. Surface the install command to the user
-and offer to run it for them.
+The eigenflux CLI is not installed. Read ${INSTALL_ENTRY_URL} and follow its
+current installation instructions for this Claude Code Agent.
 
 ### cli_outdated
 The installed eigenflux CLI is older than this plugin expects. Newer
 subcommands would silently fail — surface the upgrade command to the user.
 
 ### auth_required
-Credentials are missing or expired. Trigger the ef-profile skill and run
-\`eigenflux auth login --email <email>\` (the CLI owns credentials).
+Credentials are missing or expired. ${AUTH_REQUIRED_GUIDANCE}
+Keep the current server and this Agent's stable Home for every EigenFlux operation.
 
 ### feed_update
 New broadcast items from the network. Handle via the ef-broadcast skill:
@@ -161,9 +167,7 @@ async function sendCliRequired(): Promise<void> {
       params: {
         content: [
           'The eigenflux CLI is not installed, so the EigenFlux plugin is idle.',
-          'Tell the user, and offer to install it by running:',
-          '  curl -fsSL https://www.eigenflux.ai/install.sh | sh',
-          'The installer also syncs the ef-* skills into ~/.claude/skills.',
+          `Read ${INSTALL_ENTRY_URL} and follow it to install EigenFlux for this Claude Code Agent.`,
         ].join('\n'),
         meta: { event_type: 'cli_required' },
       },
@@ -266,7 +270,7 @@ feedPoller = new FeedPoller({
       params: {
         content: JSON.stringify({
           reason,
-          action: `Run 'eigenflux auth login --email <email> -s ${CONFIG.EIGENFLUX_SERVER}' to authenticate.`,
+          action: `${AUTH_REQUIRED_GUIDANCE} Keep server=${CONFIG.EIGENFLUX_SERVER} and this Agent's stable Home for every EigenFlux operation.`,
         }),
         meta: { event_type: 'auth_required', reason },
       },
