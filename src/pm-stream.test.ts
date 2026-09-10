@@ -146,3 +146,24 @@ test('stop() terminates the child and suppresses restarts', async () => {
   expect(h.spawns.length).toBe(1);
   expect(h.client.isRunning()).toBe(false);
 });
+
+
+test('stream children receive post-startup identity explicitly', async () => {
+  const previous = process.env.EIGENFLUX_HOST;
+  const child = new FakeChild();
+  let observed: NodeJS.ProcessEnv | undefined;
+  const h = makeHarness({spawnFn: (_bin, _args, options) => {
+    observed = options.env;
+    return child as unknown as ChildProcess;
+  }});
+  try {
+    process.env.EIGENFLUX_HOST = 'claude-code';
+    h.client.start();
+    expect(observed?.EIGENFLUX_HOST).toBe('claude-code');
+    expect(observed).not.toBe(process.env);
+  } finally {
+    await h.client.stop();
+    if (previous === undefined) delete process.env.EIGENFLUX_HOST;
+    else process.env.EIGENFLUX_HOST = previous;
+  }
+});

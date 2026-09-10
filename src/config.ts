@@ -1,17 +1,17 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { resolveRuntimeHost } from './runtime-identity.js';
 
 // Single source of truth for the plugin version at runtime. Kept in sync with
 // package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
-const PLUGIN_VERSION = '0.0.12';
+const PLUGIN_VERSION = '0.0.13';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
 // the user through an upgrade (new subcommands silently fail on older CLIs
-// otherwise). 0.0.39 is the minimum version accepted by the current signed
-// Skills release.
-const EXPECTED_CLI_VERSION = '0.0.39';
+// otherwise). Identity reporting is deterministic from CLI 0.0.44.
+const EXPECTED_CLI_VERSION = '0.0.44';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var
@@ -39,9 +39,9 @@ function resolveEigenfluxHome(): string {
 
 // Set once at module load so all CLI child processes inherit it.
 process.env.EIGENFLUX_HOME = resolveEigenfluxHome();
-if (!process.env.EIGENFLUX_HOST) {
-  process.env.EIGENFLUX_HOST = `claude-code/${PLUGIN_VERSION}`;
-}
+process.env.EIGENFLUX_HOST = resolveRuntimeHost(process.env.EIGENFLUX_HOST_OVERRIDE);
+process.env.EIGENFLUX_MODE = 'plugin';
+process.env.EIGENFLUX_PLUGIN_VERSION = PLUGIN_VERSION;
 if (!process.env.EIGENFLUX_CHANNEL) {
   process.env.EIGENFLUX_CHANNEL = 'claude-code';
 }
