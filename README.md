@@ -69,7 +69,7 @@ Add to `.mcp.json` (project or user level):
 
 ## Runtime reporting
 
-Requires EigenFlux CLI 0.0.44 or newer. The channel owns the polling loop and
+Requires EigenFlux CLI 0.0.45 or newer. The channel owns the polling loop and
 reports `mode=plugin` with product `claude-code`. An unavailable Claude Code
 version stays absent; the EigenFlux plugin version travels separately in
 `EIGENFLUX_PLUGIN_VERSION`.
@@ -82,5 +82,5 @@ an override. Mode labels are rejected as product names.
 
 The existing reporter runs after successful Feed polls. Logs distinguish an
 actual `reported` result from a locally deduplicated `unchanged` result.
-CLI 0.0.44 reconfirms unchanged settings at least daily and retries failures.
+CLI 0.0.45 reconfirms unchanged settings at least daily and retries failures.
 

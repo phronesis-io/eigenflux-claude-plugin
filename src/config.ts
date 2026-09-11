@@ -10,8 +10,8 @@ const PLUGIN_VERSION = '0.0.13';
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
 // the user through an upgrade (new subcommands silently fail on older CLIs
-// otherwise). Identity reporting is deterministic from CLI 0.0.44.
-const EXPECTED_CLI_VERSION = '0.0.44';
+// otherwise). Identity reporting is deterministic from CLI 0.0.45.
+const EXPECTED_CLI_VERSION = '0.0.45';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var
