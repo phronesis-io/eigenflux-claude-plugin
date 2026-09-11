@@ -23,7 +23,7 @@ export const MAX_CONSECUTIVE_FAILURES = 20;
 export type SpawnFn = (
   bin: string,
   args: string[],
-  options: { stdio: ['ignore', 'pipe', 'pipe'] }
+  options: { stdio: ['ignore', 'pipe', 'pipe']; env: NodeJS.ProcessEnv }
 ) => ChildProcess;
 
 export interface PmStreamEvent {
@@ -158,6 +158,7 @@ export class PmStreamClient {
 
     const child = this.spawnFn(this.config.eigenfluxBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
     });
     this.child = child;
 

@@ -62,6 +62,8 @@ export function execEigenflux<T>(
       args,
       {
         timeout,
+        // Bun may otherwise reuse its startup environment instead of config.ts updates.
+        env: { ...process.env },
         maxBuffer: 10 * 1024 * 1024,
         encoding: 'utf-8',
         ...(options?.cwd ? { cwd: options.cwd } : {}),

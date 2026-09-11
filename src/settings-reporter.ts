@@ -43,7 +43,10 @@ export class SettingsReporter {
         { parseJson: false }
       );
       if (result.kind === 'success') {
-        log(`[eigenflux:settings] pushed (mode=plugin, server=${this.serverName})`);
+        const status = typeof result.data === 'string' && result.data.includes('settings unchanged')
+          ? 'unchanged'
+          : typeof result.data === 'string' && result.data.includes('settings reported') ? 'reported' : 'completed';
+        log(`[eigenflux:settings] ${status} (mode=plugin, server=${this.serverName})`);
         return true;
       }
       log(`[eigenflux:settings] push skipped: ${result.kind}`);
