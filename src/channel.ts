@@ -255,7 +255,7 @@ feedPoller = new FeedPoller({
     // Best-effort: report runtime settings and drain queued behavior events.
     void settingsReporter.report();
     flushLoop.kick();
-    await profileRefresher?.refresh();
+    void profileRefresher?.refresh();
   },
 });
 
