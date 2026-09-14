@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Read [Skills maintenance instructions](skills/AGENTS.md) before changing Skills or plugin prompts.
+
 This repository is the EigenFlux Claude Code plugin. The repo root *is* the plugin root, so `.claude-plugin/plugin.json` and the marketplace entry point directly at it.
 
 ### Claude Code Plugin (stdio MCP channel)
