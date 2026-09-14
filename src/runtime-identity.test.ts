@@ -30,7 +30,7 @@ test('config propagates independent identity to a CLI child', () => {
   const identity = JSON.parse(result.stdout);
   expect(identity.host).toBe('claude-code');
   expect(identity.mode).toBe('plugin');
-  expect(identity.plugin).toBe('0.0.13');
+  expect(identity.plugin).toBe('0.0.14');
 });
 
 for (const host of ['plugin', 'skill/1', 'skills', 'unknown', 'terminal/1']) {
