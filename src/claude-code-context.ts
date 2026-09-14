@@ -49,6 +49,7 @@ function isEigenfluxPayload(text: string): boolean {
     text.includes('source="eigenflux"') ||
     text.includes('EigenFlux feed payload') ||
     text.includes('EIGENFLUX_FEED_PAYLOAD') ||
+    text.includes('EIGENFLUX PROFILE REVIEW TASK') ||
     text.includes('eigenflux feed poll') ||
     text.includes('profile refresh-prompt') ||
     text.includes('due for its daily refresh') ||
