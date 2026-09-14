@@ -13,6 +13,7 @@ import type { FeedResponse } from './types.js';
 import { execEigenflux, type CliResult, type ExecOptions } from './cli-executor.js';
 import { readPollIntervalSec } from './poll-interval.js';
 import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
+import type { HeartbeatPlan } from './heartbeat-plan-runner.js';
 
 const log = console.error;
 export type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise<CliResult<T>>;
@@ -22,7 +23,7 @@ export interface FeedPollerConfig {
   eigenfluxBin: string;
   /** Env override; null = read the CLI config dynamically each cycle. */
   pollIntervalOverrideSec: number | null;
-  onFeedUpdate: (payload: FeedResponse) => Promise<void>;
+  onFeedUpdate: (payload: FeedResponse, heartbeatPlan: HeartbeatPlan | null) => Promise<void>;
   onAuthRequired: (reason: string) => Promise<void>;
   /**
    * Fired on EVERY poll that finds the CLI binary missing (ENOENT). The
@@ -32,10 +33,10 @@ export interface FeedPollerConfig {
    * on the next poll instead of going permanently silent.
    */
   onCliMissing?: () => Promise<void>;
-  /** Runs the current thin Heartbeat contract before each feed poll. */
-  onHeartbeatStart?: () => Promise<void>;
+  /** Returns this cycle's central Agent instructions before the single Feed poll. */
+  onHeartbeatStart?: () => Promise<HeartbeatPlan | null>;
   /** Fired after every successful poll, including empty feeds. Best-effort. */
-  onPollSuccess?: () => void;
+  onPollSuccess?: () => Promise<void> | void;
   /** Test seam; production uses the shared CLI executor. */
   exec?: ExecFn;
 }
@@ -124,9 +125,10 @@ export class FeedPoller {
 
   async pollOnce(): Promise<FeedResponse | null> {
     try {
+      let heartbeatPlan: HeartbeatPlan | null = null;
       if (this.config.onHeartbeatStart) {
         try {
-          await this.config.onHeartbeatStart();
+          heartbeatPlan = await this.config.onHeartbeatStart();
         } catch (error) {
           log(
             `[eigenflux:feed] onHeartbeatStart hook error: ${error instanceof Error ? error.message : String(error)}`
@@ -156,8 +158,8 @@ export class FeedPoller {
       if (result.kind === 'auth_required') {
         log('[eigenflux:feed] Auth required');
         if (!this.authPrompted) {
+          await this.config.onAuthRequired(result.stderr);
           this.authPrompted = true;
-          await this.config.onAuthRequired('auth_required');
         }
         return null;
       }
@@ -187,13 +189,13 @@ export class FeedPoller {
       // Piggy-back per-poll best-effort tasks (settings push, feedback flush).
       if (this.config.onPollSuccess) {
         try {
-          this.config.onPollSuccess();
+          await this.config.onPollSuccess();
         } catch (err) {
           log(`[eigenflux:feed] onPollSuccess hook error: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
-      if (items.length > 0 || notifications.length > 0) {
+      if (heartbeatPlan?.wake_on_empty || items.length > 0 || notifications.length > 0) {
         // Check for stale delivery flag (delivery promise hung)
         if (this.deliveryInFlight && this.deliveryStartedAt > 0) {
           const elapsed = Date.now() - this.deliveryStartedAt;
@@ -216,7 +218,7 @@ export class FeedPoller {
           this.deliveryInFlight = true;
           const startedAt = Date.now();
           this.deliveryStartedAt = startedAt;
-          const delivery = this.config.onFeedUpdate(data).finally(() => {
+          const delivery = this.config.onFeedUpdate(data, heartbeatPlan).finally(() => {
             const duration = Date.now() - startedAt;
             log(`[eigenflux:feed] Delivery completed in ${Math.round(duration / 1000)}s`);
             this.deliveryInFlight = false;

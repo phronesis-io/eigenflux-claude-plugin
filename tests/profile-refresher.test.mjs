@@ -1,160 +1,108 @@
-#!/usr/bin/env node
-/**
- * Unit tests for ProfileRefresher.
- * Tests the scheduling logic, CLI argument construction, prompt assembly,
- * error handling, and lifecycle management.
- *
- * Run: node tests/profile-refresher.test.mjs
- */
-
+#!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { msUntilNextRefresh } from '../src/profile-refresher.ts';
+import { ProfileRefresher } from '../src/profile-refresher.ts';
 
 let passed = 0;
-let failed = 0;
-
-function test(name, fn) {
-  try {
-    fn();
-    passed++;
-    console.log(`  ✓ ${name}`);
-  } catch (err) {
-    failed++;
-    console.log(`  ✗ ${name}`);
-    console.log(`    ${err.message}`);
-  }
+async function test(name, run) {
+  await run();
+  passed += 1;
+  console.log(`  ✓ ${name}`);
 }
 
-async function testAsync(name, fn) {
-  try {
-    await fn();
-    passed++;
-    console.log(`  ✓ ${name}`);
-  } catch (err) {
-    failed++;
-    console.log(`  ✗ ${name}`);
-    console.log(`    ${err.message}`);
-  }
+function refresher(options = {}) {
+  return new ProfileRefresher({
+    serverName: 'staging',
+    eigenfluxBin: '/mock/eigenflux',
+    collectContext: () => ({ memoryDirs: ['/mock/memory'], sessionSnippets: ['mock host context'] }),
+    onRefreshPrompt: async () => {},
+    onAuthRequired: async () => {},
+    exec: async () => ({ kind: 'success', data: '' }),
+    ...options,
+  });
 }
 
-console.log('\nProfileRefresher unit tests\n');
-
-// ─── msUntilNextRefresh ─────────────────────────────────────────────────────
-
-console.log('msUntilNextRefresh');
-
-test('targets 1:00-4:59 AM window', () => {
-  for (let i = 0; i < 50; i++) {
-    const now = new Date(2026, 4, 27, 10, 0, 0);
-    const delay = msUntilNextRefresh(now);
-    const target = new Date(now.getTime() + delay);
-    assert.ok(target.getHours() >= 1 && target.getHours() < 5,
-      `hour ${target.getHours()} outside [1,5)`);
-    assert.ok(delay > 0, 'delay must be positive');
-  }
-});
-
-test('targets tomorrow when past 5:00 AM', () => {
-  const now = new Date(2026, 4, 27, 10, 0, 0);
-  const delay = msUntilNextRefresh(now);
-  const target = new Date(now.getTime() + delay);
-  assert.equal(target.getDate(), 28);
-});
-
-test('targets today when before 1:00 AM', () => {
-  const now = new Date(2026, 4, 27, 0, 15, 0);
-  const delay = msUntilNextRefresh(now);
-  const target = new Date(now.getTime() + delay);
-  assert.equal(target.getDate(), 27);
-  assert.ok(target.getHours() >= 1);
-});
-
-test('always returns positive delay', () => {
-  for (let h = 0; h < 24; h++) {
-    const now = new Date(2026, 4, 27, h, 30, 0);
-    const delay = msUntilNextRefresh(now);
-    assert.ok(delay > 0, `delay for hour ${h} must be positive, got ${delay}`);
-  }
-});
-
-test('fromTomorrow never lands in the same night, even mid-window', () => {
-  // A run firing at 1:10 AM must reschedule to tomorrow's window — a plain
-  // re-pick would land later tonight with ~95% probability.
-  for (let i = 0; i < 50; i++) {
-    const now = new Date(2026, 4, 27, 1, 10, 0);
-    const delay = msUntilNextRefresh(now, true);
-    const target = new Date(now.getTime() + delay);
-    assert.equal(target.getDate(), 28, `target must be tomorrow, got date ${target.getDate()}`);
-    assert.ok(target.getHours() >= 1 && target.getHours() < 5,
-      `hour ${target.getHours()} outside [1,5)`);
-  }
-});
-
-// ─── Context collection (CLI-core inputs) ───────────────────────────────────
-
-console.log('\ncollectClaudeCodeContext');
-
-// Prompt assembly moved into the CLI (`eigenflux profile refresh-prompt`);
-// the plugin only supplies memory dirs + session snippets. Verify the
-// collector is defensive: it must never throw, and always return the shape
-// the refresher consumes.
-
-const { collectClaudeCodeContext } = await import('../src/claude-code-context.ts');
-
-test('collector never throws and returns the RefreshContext shape', () => {
-  const ctx = collectClaudeCodeContext();
-  assert.ok(Array.isArray(ctx.memoryDirs), 'memoryDirs is an array');
-  assert.ok(Array.isArray(ctx.sessionSnippets), 'sessionSnippets is an array');
-  for (const s of ctx.sessionSnippets) {
-    assert.equal(typeof s, 'string');
-    assert.ok(s.length <= 280, 'snippets are capped at 280 chars');
-  }
-});
-
-// ─── ProfileRefresher lifecycle ─────────────────────────────────────────────
-
-console.log('\nProfileRefresher lifecycle');
-
-const { ProfileRefresher } = await import('../src/profile-refresher.ts');
-
-testAsync('start sets running, stop clears it', async () => {
-  const refresher = new ProfileRefresher({
-    serverName: 'test',
-    eigenfluxBin: 'eigenflux',
-    onRefreshPrompt: async () => {},
-    onAuthRequired: async () => {},
+await test('passes host context to the central task and delivers its prompt once', async () => {
+  const calls = [];
+  const delivered = [];
+  const adapter = refresher({
+    exec: async (bin, args, options) => {
+      calls.push({ bin, args, options });
+      return { kind: 'success', data: 'CENTRAL PROFILE TASK' };
+    },
+    onRefreshPrompt: async (prompt) => { delivered.push(prompt); },
   });
-
-  refresher.start();
-  // Cannot check isRunning (private), but stop should not throw
-  refresher.stop();
+  adapter.start();
+  assert.equal(calls.length, 0, 'start must not schedule a separate business timer');
+  await adapter.refresh();
+  adapter.stop();
+  assert.deepEqual(delivered, ['CENTRAL PROFILE TASK']);
+  assert.deepEqual(calls, [{
+    bin: '/mock/eigenflux',
+    args: ['profile', 'refresh-task', '-s', 'staging', '--format', 'agent', '--memory-dir', '/mock/memory', '--session-snippet', 'mock host context'],
+    options: { parseJson: false },
+  }]);
 });
 
-testAsync('double start is safe', async () => {
-  const refresher = new ProfileRefresher({
-    serverName: 'test',
-    eigenfluxBin: 'eigenflux',
-    onRefreshPrompt: async () => {},
-    onAuthRequired: async () => {},
+await test('central empty results stay silent and later heartbeats can become due', async () => {
+  let calls = 0;
+  const delivered = [];
+  const adapter = refresher({
+    exec: async () => ({ kind: 'success', data: ++calls === 1 ? '' : 'NOW DUE' }),
+    onRefreshPrompt: async (prompt) => { delivered.push(prompt); },
   });
-
-  refresher.start();
-  refresher.start(); // should not throw or double-schedule
-  refresher.stop();
+  adapter.start();
+  await adapter.refresh();
+  assert.deepEqual(delivered, []);
+  await adapter.refresh();
+  adapter.stop();
+  assert.deepEqual(delivered, ['NOW DUE']);
+  assert.equal(calls, 2);
 });
 
-testAsync('stop before start is safe', async () => {
-  const refresher = new ProfileRefresher({
-    serverName: 'test',
-    eigenfluxBin: 'eigenflux',
-    onRefreshPrompt: async () => {},
-    onAuthRequired: async () => {},
+await test('leaves empty-context decisions to the CLI', async () => {
+  let args;
+  const adapter = refresher({
+    collectContext: () => ({ memoryDirs: [], sessionSnippets: [] }),
+    exec: async (_bin, actualArgs) => { args = actualArgs; return { kind: 'success', data: '' }; },
   });
-
-  refresher.stop(); // should not throw
+  adapter.start();
+  await adapter.refresh();
+  adapter.stop();
+  assert.deepEqual(args, ['profile', 'refresh-task', '-s', 'staging', '--format', 'agent']);
 });
 
-// ─── Summary ────────────────────────────────────────────────────────────────
+await test('preserves auth diagnostics without delivering a fabricated task', async () => {
+  const diagnostics = [];
+  const adapter = refresher({
+    exec: async () => ({ kind: 'auth_required', stderr: 'CENTRAL AUTH DETAIL' }),
+    onAuthRequired: async (detail) => { diagnostics.push(detail); },
+    onRefreshPrompt: async () => { throw new Error('failed CLI result must not become a task'); },
+  });
+  adapter.start();
+  await adapter.refresh();
+  adapter.stop();
+  assert.deepEqual(diagnostics, ['CENTRAL AUTH DETAIL']);
+});
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+await test('deduplicates in-flight work and suppresses delivery after stop', async () => {
+  let finish;
+  let calls = 0;
+  let deliveries = 0;
+  const adapter = refresher({
+    exec: async () => {
+      calls += 1;
+      return new Promise((resolve) => { finish = resolve; });
+    },
+    onRefreshPrompt: async () => { deliveries += 1; },
+  });
+  adapter.start();
+  const pending = adapter.refresh();
+  await adapter.refresh();
+  assert.equal(calls, 1);
+  adapter.stop();
+  finish({ kind: 'success', data: 'LATE TASK' });
+  await pending;
+  assert.equal(deliveries, 0);
+});
+
+console.log(`${passed} profile adapter tests passed`);
