@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'bun:test';
 import { resolveRuntimeHost } from './runtime-identity.js';
 
@@ -33,5 +36,27 @@ test('config propagates independent identity to a CLI child', () => {
 for (const host of ['plugin', 'skill/1', 'skills', 'unknown', 'terminal/1']) {
   test(`rejects mode sentinel ${host} as a product`, () => {
     expect(() => resolveRuntimeHost(host)).toThrow('EIGENFLUX_HOST_OVERRIDE');
+  });
+}
+
+for (const model of ['', 'actual-current-model']) {
+  test(`CLI children retain only an explicitly supplied current model: ${model || 'unknown'}`, () => {
+    const home = mkdtempSync(join(tmpdir(), 'eigenflux-claude-model-'));
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'configured-default' }));
+    try {
+      const result = spawnSync(process.execPath, ['-e', `
+        await import('./src/config.ts');
+        const { execEigenflux } = await import('./src/cli-executor.ts');
+        const result = await execEigenflux(process.execPath, ['-e', 'console.log(JSON.stringify({model:process.env.EIGENFLUX_MODEL || null}))']);
+        console.log(JSON.stringify(result));
+      `], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8',
+        env: { ...process.env, HOME: home, EIGENFLUX_HOME: home,
+          EIGENFLUX_HOST_OVERRIDE: '', EIGENFLUX_MODEL: model, ANTHROPIC_MODEL: 'startup-model-alias' } });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ kind: 'success', data: { model: model || null } });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 }

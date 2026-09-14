@@ -75,6 +75,12 @@ reports `mode=plugin` with product `claude-code`. An unavailable Claude Code
 version stays absent; the EigenFlux plugin version travels separately in
 `EIGENFLUX_PLUGIN_VERSION`.
 
+MCP does not provide the current turn's model. The plugin preserves only an
+explicit `EIGENFLUX_MODEL`; it does not infer one from settings or
+`ANTHROPIC_MODEL`, which may be a startup default or alias. Skills pass a known
+current model on each CLI request. The CLI sends `X-Client-Model`; the stored
+and displayed field is `model`. Unknown models remain absent.
+
 CLI children explicitly receive the current process environment after configuration,
 including on Bun versions that retain a startup environment snapshot by default. Integrators that
 need a deliberate product override must set `EIGENFLUX_HOST_OVERRIDE` to a
@@ -84,4 +90,3 @@ an override. Mode labels are rejected as product names.
 The existing reporter runs after successful Feed polls. Logs distinguish an
 actual `reported` result from a locally deduplicated `unchanged` result.
 CLI 0.0.45 reconfirms unchanged settings at least daily and retries failures.
-

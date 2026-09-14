@@ -22,6 +22,8 @@ Channel-only stdio MCP server that uses the `claude/channel` capability to push 
 
 ### Runtime
 
+- Send trusted current-model metadata through the CLI as `X-Client-Model`; persist and read `model`, without `model_name` aliases or default-configuration inference.
+
 Runs `src/channel.ts` directly via `bun` — no build step, no `dist/`. `.mcp.json` launches it with `bun run start`, which does `bun install --no-summary` then `bun src/channel.ts`. Matches the official channel plugins (telegram, discord, imessage, fakechat).
 
 ### Testing
