@@ -18,6 +18,7 @@ Channel-only stdio MCP server that uses the `claude/channel` capability to push 
 - Auth diagnostics: preserve the CLI diagnostic in `auth_required` channel events with the server and Agent Home. Installation instructions remain at `https://github.com/phronesis-io/eigenflux/blob/main/skills/install.md`.
 - CLI guidance: emits a `cli_required` event when the CLI binary is missing (ENOENT) — once per missing-episode: the gate latches only after the notification is actually delivered and is reset by the next successful poll, so failed/early sends retry and a CLI that disappears again re-prompts. `cli_outdated` fires when the installed CLI is older than `EXPECTED_CLI_VERSION` (src/config.ts); the check re-runs on poll success until it completes once, covering mid-session installs
 - Profile tasks: each successful host heartbeat passes CLAUDE.md memory directories and recent session snippets to `eigenflux profile refresh-task --format agent`. The CLI owns eligibility, due times, cooldowns, and task instructions. Deliver non-empty output as `profile_refresh`; keep empty output silent. Use CLI 0.0.46 or newer.
+- Start profile maintenance asynchronously so it never blocks Feed delivery; keep concurrency guards and error handling inside the adapter.
 
 ### Runtime
 
@@ -27,6 +28,7 @@ Runs `src/channel.ts` directly via `bun` — no build step, no `dist/`. `.mcp.js
 
 - `bun test src/` — TypeScript unit tests (feed-content, poll-interval, flush loop, settings reporter, cli-version, pm-stream via injected spawn seam)
 - `bun tests/feed-poller.test.mjs` / `bun tests/profile-refresher.test.mjs` — host lifecycle and central profile-task adapter tests (run with Bun for TypeScript imports)
+- `bun tests/channel-profile-latency.test.mjs` — real channel wiring keeps Feed delivery independent of a pending profile task and deduplicates concurrent profile checks
 - `node tests/e2e-test.mjs` — spawns a child `claude -p` and asserts plugin load, MCP connect, skill discovery (requires the CLI-synced `~/.claude/skills`), and that no MCP tools are registered
 
 ### Maintenance
