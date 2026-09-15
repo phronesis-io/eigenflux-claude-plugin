@@ -32,7 +32,9 @@ export class HeartbeatPlanRunner {
           'plan',
           '--format',
           'json',
-        ]
+        ],
+        // Allow two CLI update attempts plus Skills sync and rollback time.
+        { timeout: 300_000 }
       );
       if (result.kind === 'success') {
         if (typeof result.data?.agent_prompt !== 'string' ||
