@@ -5,6 +5,8 @@
  */
 
 import { execFile } from 'child_process';
+import os from 'node:os';
+import path from 'node:path';
 
 const log = console.error;
 
@@ -47,12 +49,28 @@ export function formatArgsForLog(args: string[]): string {
   return out.join(' ');
 }
 
+/** Every subprocess pins the resolved host identity, including legacy callers. */
+export function cliScopeArgs(args: string[], home = process.env.EIGENFLUX_HOME ?? path.join(os.homedir(), '.eigenflux'), server = process.env.EIGENFLUX_SERVER ?? 'eigenflux'): string[] {
+  return [
+    ...(args.includes('--homedir') ? [] : ['--homedir', home]),
+    ...(args.includes('--server') || args.includes('-s') ? [] : ['--server', server]),
+    ...args,
+  ];
+}
+
+export function cliChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.EIGENFLUX_UPDATE_REEXEC;
+  return env;
+}
+
 export function execEigenflux<T>(
   bin: string,
   args: string[],
   options?: ExecOptions
 ): Promise<CliResult<T>> {
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+  args = cliScopeArgs(args);
 
   return new Promise((resolve) => {
     log(`[eigenflux:cli] exec: ${bin} ${formatArgsForLog(args)}`);
@@ -63,7 +81,7 @@ export function execEigenflux<T>(
       {
         timeout,
         // Bun may otherwise reuse its startup environment instead of config.ts updates.
-        env: { ...process.env },
+        env: cliChildEnv(),
         maxBuffer: 10 * 1024 * 1024,
         encoding: 'utf-8',
         ...(options?.cwd ? { cwd: options.cwd } : {}),

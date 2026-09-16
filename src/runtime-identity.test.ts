@@ -21,7 +21,7 @@ test('config propagates independent identity to a CLI child', () => {
   const result = spawnSync(process.execPath, ['-e', `
     await import('./src/config.ts');
     const { execEigenflux } = await import('./src/cli-executor.ts');
-    const child = await execEigenflux(process.execPath, ['-e', 'console.log(JSON.stringify({host:process.env.EIGENFLUX_HOST,mode:process.env.EIGENFLUX_MODE,plugin:process.env.EIGENFLUX_PLUGIN_VERSION}))']);
+    const child = await execEigenflux(process.execPath, ['-e', 'console.log(JSON.stringify({host:process.env.EIGENFLUX_HOST,mode:process.env.EIGENFLUX_MODE,plugin:process.env.EIGENFLUX_PLUGIN_VERSION}))', '--', '--homedir', process.env.EIGENFLUX_HOME, '--server', 'test']);
     process.stdout.write(JSON.stringify(child.kind === 'success' ? child.data : child));
     process.exit(child.kind === 'success' ? 0 : 1);
   `], {cwd: new URL('..', import.meta.url).pathname, encoding:'utf8',
@@ -30,7 +30,7 @@ test('config propagates independent identity to a CLI child', () => {
   const identity = JSON.parse(result.stdout);
   expect(identity.host).toBe('claude-code');
   expect(identity.mode).toBe('plugin');
-  expect(identity.plugin).toBe('0.0.14');
+  expect(identity.plugin).toBe('0.0.15');
 });
 
 for (const host of ['plugin', 'skill/1', 'skills', 'unknown', 'terminal/1']) {
@@ -48,7 +48,7 @@ for (const model of ['', 'actual-current-model']) {
       const result = spawnSync(process.execPath, ['-e', `
         await import('./src/config.ts');
         const { execEigenflux } = await import('./src/cli-executor.ts');
-        const result = await execEigenflux(process.execPath, ['-e', 'console.log(JSON.stringify({model:process.env.EIGENFLUX_MODEL || null}))']);
+        const result = await execEigenflux(process.execPath, ['-e', 'console.log(JSON.stringify({model:process.env.EIGENFLUX_MODEL || null}))', '--', '--homedir', process.env.EIGENFLUX_HOME, '--server', 'test']);
         console.log(JSON.stringify(result));
       `], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8',
         env: { ...process.env, HOME: home, EIGENFLUX_HOME: home,
@@ -60,3 +60,12 @@ for (const model of ['', 'actual-current-model']) {
     }
   });
 }
+
+test('an explicit Agent Home is normalized once for CLI compatibility', () => {
+  const result = spawnSync(process.execPath, ['-e', "const { CONFIG } = await import('./src/config.ts'); console.log(CONFIG.EIGENFLUX_HOME)"], {
+    cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8',
+    env: { ...process.env, EIGENFLUX_HOME: '/tmp/explicit-agent-home', EIGENFLUX_HOST_OVERRIDE: '' },
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim()).toBe('/tmp/explicit-agent-home/.eigenflux');
+});

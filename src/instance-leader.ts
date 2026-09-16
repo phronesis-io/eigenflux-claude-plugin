@@ -42,7 +42,22 @@
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+
+export function normalizeHome(home: string): string {
+  const expanded = home === '~' ? os.homedir() : home.startsWith('~/') ? path.join(os.homedir(), home.slice(2)) : home;
+  const resolved = path.resolve(expanded);
+  try { return fs.realpathSync(resolved); } catch { return resolved; }
+}
+
+export function leaderSocketPath(home: string, server: string, platform = process.platform): string {
+  const scope = createHash('sha256').update(JSON.stringify([normalizeHome(home), server])).digest('hex').slice(0, 32);
+  return platform === 'win32'
+    ? `\\\\.\\pipe\\eigenflux-claude-${scope}`
+    : path.join(os.tmpdir(), `ef-claude-${scope}.sock`);
+}
 
 export const PRIORITY_DEV_CHANNEL = 2;
 export const PRIORITY_DEFAULT = 1;
@@ -127,7 +142,9 @@ export class LeaderElector {
 
   start(): void {
     this.stopped = false;
-    fs.mkdirSync(path.dirname(this.opts.sockPath), { recursive: true });
+    if (!this.opts.sockPath.startsWith('\\\\.\\pipe\\')) {
+      fs.mkdirSync(path.dirname(this.opts.sockPath), { recursive: true });
+    }
     this.attempt();
   }
 
@@ -201,6 +218,10 @@ export class LeaderElector {
     // the loser just hits EADDRINUSE and goes back to standby.
     const reclaimStale = (reason: string) => {
       this.opts.log(`[eigenflux:leader] standby: reclaiming stale lock (${reason})`);
+      if (this.opts.sockPath.startsWith('\\\\.\\pipe\\')) {
+        finish(this.opts.retryMs);
+        return;
+      }
       try { fs.unlinkSync(this.opts.sockPath); } catch { /* raced */ }
       conn.destroy();
       this.staleStrikes = 0;
@@ -262,8 +283,8 @@ export class LeaderElector {
     this.abdicating = true;
     try {
       this.opts.log(`[eigenflux:leader] abdicating: ${reason}`);
-      this.closeServer();
       await this.opts.onRelease();
+      this.closeServer();
     } finally {
       this.abdicating = false;
     }

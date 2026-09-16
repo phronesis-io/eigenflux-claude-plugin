@@ -7,7 +7,11 @@ export interface HeartbeatPlan {
   wake_on_empty: boolean;
 }
 
+export type HeartbeatPlanMode = 'full' | 'control' | 'maintenance';
+
 export class HeartbeatPlanRunner {
+  private queue: Promise<unknown> = Promise.resolve();
+  private pending = new Map<string, Promise<HeartbeatPlan | null>>();
   private inFlight = false;
 
   constructor(
@@ -17,7 +21,18 @@ export class HeartbeatPlanRunner {
     private readonly exec: ExecFn = execEigenflux
   ) {}
 
-  async run(): Promise<HeartbeatPlan | null> {
+  run(mode: HeartbeatPlanMode = 'full', options: { watchManaged?: boolean } = {}): Promise<HeartbeatPlan | null> {
+    const watchManaged = mode === 'full' && options.watchManaged === true;
+    const key = `${mode}:${watchManaged}`;
+    const pending = this.pending.get(key);
+    if (pending) return pending;
+    const task = this.queue.then(() => this.runOnce(mode, watchManaged));
+    this.pending.set(key, task);
+    this.queue = task.catch(() => {}).finally(() => { this.pending.delete(key); });
+    return task;
+  }
+
+  private async runOnce(mode: HeartbeatPlanMode, watchManaged: boolean): Promise<HeartbeatPlan | null> {
     if (this.inFlight) return null;
     this.inFlight = true;
     try {
@@ -30,6 +45,8 @@ export class HeartbeatPlanRunner {
           this.serverName,
           'heartbeat',
           'plan',
+          ...(mode === 'full' ? [] : [`--${mode}-only`]),
+          ...(watchManaged ? ['--watch-managed'] : []),
           '--format',
           'json',
         ],
@@ -38,7 +55,7 @@ export class HeartbeatPlanRunner {
       );
       if (result.kind === 'success') {
         if (typeof result.data?.agent_prompt !== 'string' ||
-            !result.data.agent_prompt.trim() ||
+            (mode === 'full' && !result.data.agent_prompt.trim()) ||
             typeof result.data.wake_on_empty !== 'boolean') {
           throw new Error('EigenFlux CLI returned no compatible central heartbeat plan');
         }

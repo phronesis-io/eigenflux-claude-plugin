@@ -152,3 +152,19 @@ describe('LeaderElector', () => {
     frozen.close();
   });
 });
+
+test('preemption retains the leader lock until its consumer has stopped', async () => {
+  const sock = tmpSock();
+  let release!: () => void;
+  let releasing = false;
+  const low = makeElector(sock, 1, 100, {
+    async onRelease() { releasing = true; await new Promise<void>((resolve) => { release = resolve; }); },
+  });
+  const high = makeElector(sock, 2);
+  register(sock, low, high);
+  low.elector.start(); await waitFor(() => low.elector.isLeader);
+  high.elector.start(); await waitFor(() => releasing);
+  expect(low.elector.isLeader).toBe(true);
+  expect(high.elector.isLeader).toBe(false);
+  release(); await waitFor(() => high.elector.isLeader);
+});

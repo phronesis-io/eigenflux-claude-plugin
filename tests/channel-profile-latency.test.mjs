@@ -17,6 +17,7 @@ let finishProfile;
 let profileCalls = 0;
 const profileResult = new Promise((resolve) => { finishProfile = resolve; });
 mock.module('../src/cli-executor.js', () => ({
+  cliChildEnv: () => ({ ...process.env }),
   execEigenflux: async (_bin, args) => {
     if (args[0] === 'profile') {
       profileCalls += 1;
@@ -41,6 +42,8 @@ mock.module('@modelcontextprotocol/sdk/server/index.js', () => ({
 mock.module('@modelcontextprotocol/sdk/server/stdio.js', () => ({ StdioServerTransport: class {} }));
 mock.module('../src/instance-leader.js', () => ({
   detectLeaderPriority: () => 0,
+  leaderSocketPath: () => '/mock/leader.sock',
+  normalizeHome: (home) => home,
   LeaderElector: class {
     constructor(config) { this.config = config; }
     start() { this.config.onAcquire(); }
@@ -50,8 +53,9 @@ mock.module('../src/instance-leader.js', () => ({
 mock.module('../src/pm-stream.js', () => ({ PmStreamClient: class { start() {} stop() {} } }));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
 mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', isCliOutdated: () => false }));
+const planCalls = [];
 mock.module('../src/heartbeat-plan-runner.js', () => ({
-  HeartbeatPlanRunner: class { async run() { return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
+  HeartbeatPlanRunner: class { async run(mode, options) { planCalls.push({ mode, options }); return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
 }));
 
 const { FeedPoller } = await import('../src/feed-poller.ts');
@@ -79,4 +83,6 @@ try {
 }
 await new Promise((resolve) => setImmediate(resolve));
 assert.deepEqual(events, ['feed_update', 'feed_update', 'profile_refresh']);
+assert.ok(planCalls.length > 0);
+assert.ok(planCalls.every((call) => call.mode === 'full' && call.options.watchManaged === false), 'legacy mode must not pass watch-managed to its CLI');
 console.log('channel profile latency regression passed');

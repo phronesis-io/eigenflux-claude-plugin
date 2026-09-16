@@ -6,6 +6,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
+import { cliChildEnv } from './cli-executor.js';
 import { createInterface, Interface as ReadlineInterface } from 'readline';
 
 const log = console.error;
@@ -43,6 +44,7 @@ export interface PmStreamEvent {
 }
 
 export interface PmStreamClientConfig {
+  eigenfluxHome?: string;
   serverName: string;
   eigenfluxBin: string;
   onPmEvent: (event: PmStreamEvent) => Promise<void>;
@@ -149,7 +151,10 @@ export class PmStreamClient {
       return;
     }
 
-    const args = ['stream', '-s', this.config.serverName, '-f', 'json'];
+    const args = [
+      ...(this.config.eigenfluxHome ? ['--homedir', this.config.eigenfluxHome] : []),
+      'stream', '-s', this.config.serverName, '-f', 'json',
+    ];
     if (this.lastCursor) {
       args.push('--cursor', this.lastCursor);
     }
@@ -158,7 +163,7 @@ export class PmStreamClient {
 
     const child = this.spawnFn(this.config.eigenfluxBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: cliChildEnv(),
     });
     this.child = child;
 

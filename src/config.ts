@@ -4,7 +4,7 @@ import { resolveRuntimeHost } from './runtime-identity.js';
 
 // Single source of truth for the plugin version at runtime. Kept in sync with
 // package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
-const PLUGIN_VERSION = '0.0.14';
+const PLUGIN_VERSION = '0.0.15';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
@@ -31,7 +31,7 @@ function resolveEigenfluxHome(): string {
   const envHome = process.env.EIGENFLUX_HOME;
   if (envHome) {
     const expanded = envHome === '~' ? os.homedir() : envHome.startsWith('~/') ? path.join(os.homedir(), envHome.slice(2)) : envHome;
-    return expanded.endsWith('.eigenflux') ? expanded : path.join(expanded, '.eigenflux');
+    return path.resolve(path.basename(expanded) === '.eigenflux' ? expanded : path.join(expanded, '.eigenflux'));
   }
   return path.join(os.homedir(), '.eigenflux');
 }
