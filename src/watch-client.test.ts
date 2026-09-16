@@ -148,3 +148,58 @@ test('all fatal diagnostics and exit 78 stop the account callback without retryi
     await client.stop();
   }
 });
+
+test('fatal diagnostics invalidate PM dispatches from the same stdout batch', async () => {
+  const h = harness(); h.client.start();
+  const child = h.children[0]; child.started();
+  const line = (type: string, data: object) => JSON.stringify({ schema_version: 'eigenflux_watch.v1', state_scope: 'opaque-account-hash', event_id: type, type, data });
+  child.stdout.write(line('pm_push', { messages: ['must not deliver'] }) + '\n' + line('diagnostic', { code: 'identity_changed' }) + '\n');
+  await settle();
+  expect(h.events).toHaveLength(0);
+  expect(h.client.isRunning()).toBe(false);
+  await h.client.stop();
+});
+
+test('retry exhaustion stops the account and clears the supervisor owner', async () => {
+  const { StreamSupervisor } = await import('./watch-runtime.js');
+  const children: Child[] = []; let fatals = 0;
+  let stopped: Promise<void> | undefined;
+  const watch = new WatchClient({
+    eigenfluxBin: 'ef', eigenfluxHome: '/tmp/watch-home', serverName: 'test', retryMs: 1, maxFailures: 2,
+    spawnFn: () => { const child = new Child(); children.push(child); return child as unknown as ChildProcess; },
+    async onEvent() {}, async onDiagnostic() {},
+    async onFatal() { fatals++; stopped = supervisor.stop(); await stopped; },
+  });
+  const supervisor = new StreamSupervisor({ start() {}, async stop() {} }, watch, async () => '1.0.0');
+  await supervisor.start();
+  children[0].emit('exit', 1); await settle();
+  children[1].emit('exit', 1); await stopped;
+  await supervisor.refresh();
+  expect(fatals).toBe(1); expect(children).toHaveLength(2);
+  expect(watch.isRunning()).toBe(false); expect(supervisor.usingWatch).toBe(false);
+});
+
+test('replacement limit and unconfirmed exit report fatal once without repeated termination', async () => {
+  for (const failure of ['limit', 'exit']) {
+    const children: Child[] = []; let fatals = 0;
+    const client = new WatchClient({
+      eigenfluxBin: 'ef', eigenfluxHome: '/tmp/watch-home', serverName: 'test', stopGraceMs: 5,
+      spawnFn: () => { const child = new Child(); children.push(child); return child as unknown as ChildProcess; },
+      async onEvent() {}, async onDiagnostic() {}, async onFatal() { fatals++; },
+    });
+    client.start(); children[0].started();
+    if (failure === 'exit') children[0].autoExit = false;
+    const rounds = failure === 'limit' ? 4 : 1;
+    for (let i = 0; i < rounds; i++) {
+      children[i].send('restart_required', { cli_version: `1.0.${i + 1}` });
+      await settle(20);
+      children[i + 1]?.started(`1.0.${i + 1}`);
+    }
+    expect(fatals).toBe(1); expect(client.isRunning()).toBe(false);
+    if (failure === 'exit') {
+      expect(children[0].signals).toEqual(['SIGTERM', 'SIGKILL']);
+      children[0].emit('exit', 0);
+    }
+    await client.stop();
+  }
+});

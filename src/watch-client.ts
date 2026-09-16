@@ -31,8 +31,11 @@ export class WatchClient {
   private reader: Interface | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private generation = 0;
+  private fatalStopped = false;
   private failures = 0;
   private terminating: Promise<void> | null = null;
+  private terminationError: Error | null = null;
   private replacing = false;
   private identity: { scope: string; agent: string } | null = null;
   private startedVersion: string | null = null;
@@ -44,7 +47,7 @@ export class WatchClient {
   constructor(private readonly config: WatchClientConfig) {}
 
   start(): void {
-    if (this.running || this.terminating || this.child) return;
+    if (this.fatalStopped || this.running || this.terminating || this.child) return;
     this.running = true;
     this.spawnProcess();
   }
@@ -53,9 +56,14 @@ export class WatchClient {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.generation++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    await this.terminateChild();
+    try { await this.terminateChild(); }
+    catch (error) {
+      this.fail(`watch stop blocked: ${String(error)}`);
+      throw error;
+    }
   }
 
   private report(detail: string): void {
@@ -112,8 +120,7 @@ export class WatchClient {
   private scheduleRestart(): void {
     if (!this.running || this.timer) return;
     if (++this.failures >= (this.config.maxFailures ?? 20)) {
-      this.running = false;
-      this.report('watch stopped after repeated failures');
+      this.fail('watch stopped after repeated failures');
       return;
     }
     const delay = Math.min((this.config.retryMs ?? 1000) * 2 ** (this.failures - 1), 60_000);
@@ -124,6 +131,7 @@ export class WatchClient {
     if (this.terminating) return this.terminating;
     const child = this.child;
     if (!child) return Promise.resolve();
+    if (this.terminationError) return Promise.reject(this.terminationError);
     this.reader?.close();
     const grace = this.config.stopGraceMs ?? 5000;
     const task = new Promise<void>((resolve, reject) => {
@@ -144,14 +152,27 @@ export class WatchClient {
       }, grace);
       try { child.kill('SIGTERM'); } catch { /* Exit confirmation is still required. */ }
     });
-    this.terminating = task.finally(() => { this.terminating = null; });
+    this.terminating = task.catch((error: Error) => {
+      this.terminationError = error;
+      throw error;
+    }).finally(() => { this.terminating = null; });
     return this.terminating;
   }
 
   private rejectIdentity(): void {
     const detail = 'watch identity or configuration changed; stopped until the host is restarted';
+    this.fail(detail);
+  }
+
+  private fail(detail: string): void {
+    if (this.fatalStopped) return;
+    this.fatalStopped = true;
+    this.running = false;
+    this.generation++;
     this.report(detail);
-    void Promise.resolve().then(() => this.config.onFatal?.(detail)).catch((error) => this.report(String(error)));
+    try {
+      void this.config.onFatal?.(detail).catch((error) => this.report(String(error)));
+    } catch (error) { this.report(String(error)); }
     void this.stop().catch((error) => this.report(String(error)));
   }
 
@@ -194,7 +215,10 @@ export class WatchClient {
     const key = `${event.state_scope}:${event.event_id}`;
     if (this.delivered.has(key) || this.pending.has(key)) return;
     this.pending.add(key);
-    void Promise.resolve().then(() => this.config.onEvent(event)).then(() => {
+    const generation = this.generation;
+    void Promise.resolve().then(async () => {
+      if (!this.running || generation !== this.generation) return;
+      await this.config.onEvent(event);
       this.delivered.add(key);
       if (this.delivered.size > 512) this.delivered.delete(this.delivered.values().next().value!);
     }).catch((error) => this.report(`event delivery failed: ${String(error)}`)).finally(() => this.pending.delete(key));
@@ -204,8 +228,7 @@ export class WatchClient {
     if (this.replacing || !this.running) return;
     this.handoffs = this.handoffs.filter((time) => Date.now() - time < 60_000);
     if (this.handoffs.length >= 3) {
-      this.report('watch replacement limit reached');
-      await this.stop().catch((error) => this.report(String(error)));
+      this.fail('watch replacement limit reached');
       return;
     }
     this.handoffs.push(Date.now());
@@ -215,8 +238,7 @@ export class WatchClient {
       await this.terminateChild();
       if (this.running) this.spawnProcess();
     } catch (error) {
-      this.running = false;
-      this.report(`watch replacement blocked: ${String(error)}`);
+      this.fail(`watch replacement blocked: ${String(error)}`);
     } finally { this.replacing = false; }
   }
 }

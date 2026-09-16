@@ -49,6 +49,7 @@ export class FeedPoller {
   private config: FeedPollerConfig;
   private timeoutId: NodeJS.Timeout | null = null;
   private running = false;
+  private generation = 0;
   private authPrompted = false;
   private deliveryInFlight = false;
   private deliveryStartedAt = 0;
@@ -82,6 +83,7 @@ export class FeedPoller {
   }
 
   async stop(): Promise<void> {
+    this.generation++;
     if (!this.running) return;
 
     log('[eigenflux:feed] Stopping poller');
@@ -124,6 +126,7 @@ export class FeedPoller {
   }
 
   async pollOnce(): Promise<FeedResponse | null> {
+    const generation = this.generation;
     try {
       let heartbeatPlan: HeartbeatPlan | null = null;
       if (this.config.onHeartbeatStart) {
@@ -136,6 +139,7 @@ export class FeedPoller {
         }
       }
 
+      if (generation !== this.generation) return null;
       log(`[eigenflux:feed] Polling via CLI for server=${this.config.serverName}`);
 
       const result = await (this.config.exec ?? execEigenflux)<FeedResponse['data']>(
@@ -143,6 +147,7 @@ export class FeedPoller {
         ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json']
       );
 
+      if (generation !== this.generation) return null;
       if (result.kind === 'not_installed') {
         log(`[eigenflux:feed] CLI not installed (bin=${result.bin})`);
         if (this.config.onCliMissing) {
@@ -195,6 +200,7 @@ export class FeedPoller {
         }
       }
 
+      if (generation !== this.generation) return null;
       if (heartbeatPlan?.wake_on_empty || items.length > 0 || notifications.length > 0) {
         // Check for stale delivery flag (delivery promise hung)
         if (this.deliveryInFlight && this.deliveryStartedAt > 0) {

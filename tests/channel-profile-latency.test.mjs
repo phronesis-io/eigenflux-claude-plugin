@@ -55,7 +55,7 @@ mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class {
 mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', isCliOutdated: () => false }));
 const planCalls = [];
 mock.module('../src/heartbeat-plan-runner.js', () => ({
-  HeartbeatPlanRunner: class { async run(mode, options) { planCalls.push({ mode, options }); return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
+  HeartbeatPlanRunner: class { async cancelQueued() {} async run(mode, options) { planCalls.push({ mode, options }); return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
 }));
 
 const { FeedPoller } = await import('../src/feed-poller.ts');

@@ -44,6 +44,7 @@ export class StreamSupervisor {
 
   async stop(): Promise<void> {
     this.enabled = false;
+    this.usingWatch = false;
     this.generation++;
     await this.selecting;
     await this.active?.stop();
@@ -58,7 +59,7 @@ export class WatchEventRouter {
   private enabled = false;
   private deliveries = new Set<Promise<void>>();
   constructor(private readonly deps: {
-    plans: Pick<HeartbeatPlanRunner, 'run'>;
+    plans: Pick<HeartbeatPlanRunner, 'run' | 'cancelQueued'>;
     refreshProfile: () => Promise<void>;
     deliverPm: (event: WatchEvent) => Promise<void>;
     notify: (type: string, content: string) => Promise<void>;
@@ -66,7 +67,8 @@ export class WatchEventRouter {
   start(): void { this.enabled = true; }
   async stop(): Promise<void> {
     this.enabled = false;
-    await Promise.allSettled([...this.inFlight.values(), ...this.deliveries]);
+    const plansStopped = this.deps.plans.cancelQueued();
+    await Promise.allSettled([plansStopped, ...this.inFlight.values(), ...this.deliveries]);
   }
   private track(task: Promise<void>): Promise<void> {
     this.deliveries.add(task);

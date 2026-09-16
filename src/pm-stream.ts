@@ -67,6 +67,7 @@ export class PmStreamClient {
   private child: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private stopping = false;
+  private terminating: Promise<void> | null = null;
   private running = false;
   private lastCursor: string | null = null;
   private backoffMs: number;
@@ -92,7 +93,7 @@ export class PmStreamClient {
   }
 
   start(): void {
-    if (this.running) {
+    if (this.running || this.child || this.terminating) {
       log('[eigenflux:stream] Stream client already running');
       return;
     }
@@ -104,9 +105,8 @@ export class PmStreamClient {
   }
 
   async stop(): Promise<void> {
-    if (!this.running) {
-      return;
-    }
+    if (this.terminating) return this.terminating;
+    if (!this.running && !this.child) return;
 
     log('[eigenflux:stream] Stopping stream client');
     this.stopping = true;
@@ -124,25 +124,26 @@ export class PmStreamClient {
 
     if (this.child) {
       const child = this.child;
-      this.child = null;
-
-      child.kill('SIGTERM');
-
-      await new Promise<void>((resolve) => {
-        const forceKillTimer = setTimeout(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            // Process already exited
-          }
-          resolve();
+      const task = new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout>;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          child.removeListener('exit', exited);
+          if (error) reject(error); else resolve();
+        };
+        const exited = () => finish();
+        child.once('exit', exited);
+        timer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* Await confirmed exit. */ }
+          if (!settled) timer = setTimeout(() => finish(new Error('stream exit could not be confirmed after SIGTERM/SIGKILL')), this.stopGraceMs);
         }, this.stopGraceMs);
-
-        child.once('exit', () => {
-          clearTimeout(forceKillTimer);
-          resolve();
-        });
+        try { child.kill('SIGTERM'); } catch { /* Await confirmed exit. */ }
       });
+      this.terminating = task.finally(() => { this.terminating = null; });
+      await this.terminating;
     }
   }
 
@@ -183,11 +184,13 @@ export class PmStreamClient {
 
     child.on('error', (err) => {
       log(`[eigenflux:stream] Process error: ${err.message}`);
+      if (!child.pid && this.child === child) this.child = null;
       this.scheduleRestart();
     });
 
     child.on('exit', (code, signal) => {
       log(`[eigenflux:stream] Process exited (code=${code}, signal=${signal})`);
+      if (this.child === child) this.child = null;
 
       if (this.stopping) {
         return;

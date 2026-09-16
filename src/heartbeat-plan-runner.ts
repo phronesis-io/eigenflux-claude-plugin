@@ -13,6 +13,7 @@ export class HeartbeatPlanRunner {
   private queue: Promise<unknown> = Promise.resolve();
   private pending = new Map<string, Promise<HeartbeatPlan | null>>();
   private inFlight = false;
+  private generation = 0;
 
   constructor(
     private readonly eigenfluxBin: string,
@@ -26,10 +27,19 @@ export class HeartbeatPlanRunner {
     const key = `${mode}:${watchManaged}`;
     const pending = this.pending.get(key);
     if (pending) return pending;
-    const task = this.queue.then(() => this.runOnce(mode, watchManaged));
+    const generation = this.generation;
+    const task = this.queue.then(() => generation === this.generation ? this.runOnce(mode, watchManaged) : null);
     this.pending.set(key, task);
-    this.queue = task.catch(() => {}).finally(() => { this.pending.delete(key); });
+    this.queue = task.catch(() => {}).finally(() => {
+      if (this.pending.get(key) === task) this.pending.delete(key);
+    });
     return task;
+  }
+
+  async cancelQueued(): Promise<void> {
+    this.generation++;
+    this.pending.clear();
+    await this.queue;
   }
 
   private async runOnce(mode: HeartbeatPlanMode, watchManaged: boolean): Promise<HeartbeatPlan | null> {

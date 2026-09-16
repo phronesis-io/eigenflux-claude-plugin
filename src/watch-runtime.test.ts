@@ -40,7 +40,7 @@ test('due events route without Feed, coalesce in-flight only, and remain respons
   const plans: string[] = []; const notices: string[] = []; const pms: string[] = []; let profiles = 0;
   let finish!: () => void;
   const router = new WatchEventRouter({
-    plans: { async run(mode) { plans.push(mode!); if (mode === 'maintenance') await new Promise<void>((resolve) => { finish = resolve; }); return { agent_prompt: `central:${mode}`, wake_on_empty: true }; } },
+    plans: { async cancelQueued() {}, async run(mode) { plans.push(mode!); if (mode === 'maintenance') await new Promise<void>((resolve) => { finish = resolve; }); return { agent_prompt: `central:${mode}`, wake_on_empty: true }; } },
     async refreshProfile() { profiles++; }, async deliverPm(event) { pms.push(event.type); },
     async notify(type, content) { notices.push(`${type}:${content}`); },
   });
@@ -62,11 +62,33 @@ test('due events route without Feed, coalesce in-flight only, and remain respons
 test('empty plans stay silent and leadership loss suppresses late plan notification', async () => {
   let finish!: () => void; const notices: string[] = [];
   const router = new WatchEventRouter({
-    plans: { async run(mode) { if (mode === 'maintenance') await new Promise<void>((resolve) => { finish = resolve; }); return { agent_prompt: mode === 'control' ? '' : 'central', wake_on_empty: false }; } },
+    plans: { async cancelQueued() {}, async run(mode) { if (mode === 'maintenance') await new Promise<void>((resolve) => { finish = resolve; }); return { agent_prompt: mode === 'control' ? '' : 'central', wake_on_empty: false }; } },
     async refreshProfile() {}, async deliverPm() {}, async notify(type) { notices.push(type); },
   });
   router.start(); await router.handle(event('control_pending'));
   const running = router.handle(event('maintenance_due')); const stopping = router.stop();
   finish(); await running; await stopping;
   expect(notices).toHaveLength(0);
+});
+
+test('router stop cancels queued central CLI work and awaits the active command', async () => {
+  const { HeartbeatPlanRunner } = await import('./heartbeat-plan-runner.js');
+  const calls: string[][] = []; const notices: string[] = []; let finish!: () => void;
+  const runner = new HeartbeatPlanRunner('ef', '/home', 'prod', async <T>(_bin: string, args: string[]) => {
+    calls.push(args);
+    await new Promise<void>((resolve) => { finish = resolve; });
+    return { kind: 'success', data: { agent_prompt: 'central', wake_on_empty: true } as T };
+  });
+  const router = new WatchEventRouter({
+    plans: runner, async refreshProfile() {}, async deliverPm() {}, async notify(type) { notices.push(type); },
+  });
+  router.start();
+  const active = runner.run('full', { watchManaged: true });
+  const queued = router.handle(event('control_pending'));
+  await settle();
+  let stopped = false;
+  const stopping = router.stop().then(() => { stopped = true; });
+  await settle(); expect(stopped).toBe(false);
+  finish(); await Promise.all([active, queued, stopping]);
+  expect(calls).toHaveLength(1); expect(notices).toHaveLength(0);
 });

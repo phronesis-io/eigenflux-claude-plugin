@@ -108,3 +108,22 @@ test('legacy and watch-managed full plans do not share an in-flight result', asy
   expect(calls[0]).not.toContain('--watch-managed');
   expect(calls[1]).toContain('--watch-managed');
 });
+
+test('cancelQueued preserves the active plan and cancels work from the stopped owner', async () => {
+  const calls: string[][] = []; let finish!: () => void;
+  const exec = async <T>(_bin: string, args: string[]) => {
+    calls.push(args);
+    if (calls.length === 1) await new Promise<void>((resolve) => { finish = resolve; });
+    return { kind: 'success', data: { agent_prompt: 'central', wake_on_empty: true } } as CliResult<T>;
+  };
+  const runner = new HeartbeatPlanRunner('ef', '/home', 'prod', exec);
+  const active = runner.run('maintenance');
+  const queued = runner.run('control');
+  await new Promise((resolve) => setImmediate(resolve));
+  runner.cancelQueued();
+  const nextOwner = runner.run('control');
+  finish();
+  expect(await active).not.toBeNull(); expect(await queued).toBeNull();
+  expect(await nextOwner).not.toBeNull();
+  expect(calls).toHaveLength(2);
+});

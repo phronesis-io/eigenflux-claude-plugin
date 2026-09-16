@@ -375,9 +375,7 @@ const leaderElector = new LeaderElector({
     leadershipGeneration++;
     flushLoop.stop();
     profileRefresher?.stop();
-    await streamSupervisor.stop();
-    await watchRouter.stop();
-    await feedPoller?.stop();
+    await Promise.all([watchRouter.stop(), streamSupervisor.stop(), feedPoller?.stop()]);
   },
 });
 log(`[eigenflux] leader election starting (priority=${leaderPriority})`);
@@ -388,7 +386,7 @@ async function shutdown(signal: string) {
   leadershipGeneration++;
   flushLoop.stop();
   profileRefresher?.stop();
-  await Promise.all([streamSupervisor.stop(), watchRouter.stop(), feedPoller?.stop()]);
+  await Promise.all([watchRouter.stop(), streamSupervisor.stop(), feedPoller?.stop()]);
   leaderElector.stop();
 }
 process.on('SIGTERM', () => { shutdown('SIGTERM'); });

@@ -167,3 +167,30 @@ test('stream children receive post-startup identity explicitly', async () => {
     else process.env.EIGENFLUX_HOST = previous;
   }
 });
+
+test('legacy-to-watch handoff requires confirmed exit after SIGKILL', async () => {
+  const { StreamSupervisor } = await import('./watch-runtime.js');
+  const child = new FakeChild(); const signals: string[] = [];
+  child.kill = (signal) => { signals.push(signal!); return true; };
+  const h = makeHarness({ spawnFn: () => child as unknown as ChildProcess, stopGraceMs: 15 });
+  let version = '0.0.46'; let watchStarts = 0;
+  const supervisor = new StreamSupervisor(h.client, { start() { watchStarts++; }, async stop() {} }, async () => version);
+  await supervisor.start(); version = '1.0.0';
+  const handoff = supervisor.refresh();
+  await settle(20);
+  expect(signals).toEqual(['SIGTERM', 'SIGKILL']); expect(watchStarts).toBe(0);
+  child.emit('exit', null, 'SIGKILL'); await handoff;
+  expect(watchStarts).toBe(1); await supervisor.stop();
+});
+
+test('legacy exit timeout blocks watch startup and reports failure', async () => {
+  const { StreamSupervisor } = await import('./watch-runtime.js');
+  const child = new FakeChild(); child.kill = () => true;
+  const h = makeHarness({ spawnFn: () => child as unknown as ChildProcess, stopGraceMs: 5 });
+  let version = '0.0.46'; let watchStarts = 0;
+  const supervisor = new StreamSupervisor(h.client, { start() { watchStarts++; }, async stop() {} }, async () => version);
+  await supervisor.start(); version = '1.0.0';
+  await expect(supervisor.refresh()).rejects.toThrow('stream exit could not be confirmed');
+  expect(watchStarts).toBe(0); expect(supervisor.usingWatch).toBe(false);
+  child.emit('exit', null, 'SIGKILL'); await supervisor.stop();
+});
