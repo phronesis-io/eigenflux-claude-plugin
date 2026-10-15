@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import { HeartbeatPlanRunner } from './heartbeat-plan-runner.js';
-import type { CliResult } from './cli-executor.js';
+import type { CliResult, ExecOptions } from './cli-executor.js';
 
 test('runs the thin Heartbeat plan with the stable Home', async () => {
-  const calls: Array<{ bin: string; args: string[]; parseJson?: boolean }> = [];
-  const exec = async <T>(bin: string, args: string[], options?: { parseJson?: boolean }) => {
-    calls.push({ bin, args, parseJson: options?.parseJson });
+  const calls: Array<{ bin: string; args: string[]; options?: ExecOptions }> = [];
+  const exec = async <T>(bin: string, args: string[], options?: ExecOptions) => {
+    calls.push({ bin, args, options });
     return { kind: 'success', data: { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: true } } as CliResult<T>;
   };
   const runner = new HeartbeatPlanRunner(
@@ -29,7 +29,7 @@ test('runs the thin Heartbeat plan with the stable Home', async () => {
         '--format',
         'json',
       ],
-      parseJson: undefined,
+      options: { timeout: 300_000 },
     },
   ]);
 });
