@@ -6,7 +6,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { createInterface, Interface as ReadlineInterface } from 'readline';
+import { createInterface } from 'readline';
 
 const log = console.error;
 
@@ -66,14 +66,15 @@ export class PmStreamClient {
   private readonly stopGraceMs: number;
   private child: ChildProcess | null = null;
   private childExited = true;
-  private childExit: Promise<void> = Promise.resolve();
+  private childClosed = true;
+  private childClose: Promise<void> = Promise.resolve();
   private delivery: Promise<void> = Promise.resolve();
-  private cursorBlocked = false;
+  private pendingEvents: PmStreamEvent[] = [];
+  private delivering = false;
   private cliVersion: string | null = null;
   private handoff: Promise<void> | null = null;
   private stoppingPromise: Promise<void> | null = null;
   private rolling = false;
-  private readline: ReadlineInterface | null = null;
   private stopping = false;
   private running = false;
   private lastCursor: string | null = null;
@@ -100,7 +101,7 @@ export class PmStreamClient {
   }
 
   start(): void {
-    if (this.running || this.stoppingPromise || this.rolling || (this.child && !this.childExited)) {
+    if (this.running || this.stoppingPromise || this.rolling || (this.child && !this.childClosed)) {
       log('[eigenflux:stream] Stream client already running');
       return;
     }
@@ -118,7 +119,6 @@ export class PmStreamClient {
     if (this.stoppingPromise) return this.stoppingPromise;
     this.stoppingPromise = (async () => {
       if (this.handoff) await this.handoff.catch(() => {});
-      this.readline?.close();
       await this.terminateChild();
       await this.waitForDelivery();
     })();
@@ -133,19 +133,22 @@ export class PmStreamClient {
   async refreshForCliVersion(version: string): Promise<void> {
     if (!/^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) return;
     if (this.handoff) await this.handoff;
-    if (version === this.cliVersion) return;
+    if (version === this.cliVersion) {
+      await this.waitForDelivery();
+      return;
+    }
     if (!this.running || this.stopping) {
       this.cliVersion = version;
       return;
     }
     this.rolling = true;
     this.clearRestart();
-    this.readline?.pause();
+    log(`[eigenflux:stream] CLI handoff requested (from=${this.cliVersion ?? 'unknown'}, to=${version}, pending=${this.pendingEvents.length})`);
     this.handoff = (async () => {
-      await this.waitForDelivery();
-      if (this.stopping) return;
-      this.readline?.close();
+      // Keep stdout attached through close: a process can exit while unread
+      // messages are still buffered in its pipes.
       await this.terminateChild();
+      await this.waitForDelivery();
       if (this.stopping || !this.running) return;
       log(`[eigenflux:stream] Loading CLI ${version}`);
       this.spawnStreamProcess();
@@ -156,8 +159,6 @@ export class PmStreamClient {
     } finally {
       this.handoff = null;
       this.rolling = false;
-      // A timed-out notification keeps its original process and resumes input.
-      if (!this.stopping) this.readline?.resume();
     }
   }
 
@@ -169,6 +170,7 @@ export class PmStreamClient {
   private async waitForDelivery(): Promise<void> {
     let timer: NodeJS.Timeout | undefined;
     try {
+      this.deliverPending();
       await Promise.race([
         this.delivery,
         new Promise<never>((_, reject) => {
@@ -176,6 +178,9 @@ export class PmStreamClient {
             this.config.notificationGraceMs ?? 30_000);
         }),
       ]);
+      if (this.pendingEvents.length) {
+        throw new Error(`PM notifications remain pending (${this.pendingEvents.length})`);
+      }
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -184,12 +189,12 @@ export class PmStreamClient {
   private async terminateChild(): Promise<void> {
     const child = this.child;
     if (!child) return;
-    const exited = this.childExit;
+    const closed = this.childClose;
     const wait = async () => {
       let timer: NodeJS.Timeout | undefined;
       try {
         return await Promise.race([
-          exited.then(() => true),
+          closed.then(() => true),
           new Promise<boolean>((resolve) => {
             timer = setTimeout(() => resolve(false), this.stopGraceMs);
           }),
@@ -198,18 +203,24 @@ export class PmStreamClient {
         if (timer) clearTimeout(timer);
       }
     };
-    if (!this.childExited) {
-      child.kill('SIGTERM');
+    if (!this.childClosed) {
+      if (!this.childExited) child.kill('SIGTERM');
       if (!await wait()) {
-        child.kill('SIGKILL');
-        if (!await wait()) throw new Error('Previous PM process has not exited');
+        if (!this.childExited) child.kill('SIGKILL');
+        if (!await wait()) throw new Error('Previous PM process stdio has not closed');
       }
     }
-    if (this.child === child) this.child = null;
+    if (this.child === child) {
+      this.child = null;
+    }
   }
 
   private spawnStreamProcess(): void {
     if (this.stopping || !this.running) {
+      return;
+    }
+    if (this.pendingEvents.length) {
+      this.scheduleRestart();
       return;
     }
 
@@ -227,19 +238,21 @@ export class PmStreamClient {
     });
     this.child = child;
     this.childExited = false;
-    this.cursorBlocked = false;
-    this.childExit = new Promise<void>((resolve) => {
-      const markExited = () => {
+    this.childClosed = false;
+    this.childClose = new Promise<void>((resolve) => {
+      child.once('exit', () => {
         if (this.child === child) this.childExited = true;
+      });
+      child.once('close', () => {
+        if (this.child === child) {
+          this.childExited = true;
+          this.childClosed = true;
+        }
         resolve();
-      };
-      child.once('exit', markExited);
-      // Spawn failures may emit close without exit.
-      child.once('close', markExited);
+      });
     });
 
     const rl = createInterface({ input: child.stdout! });
-    this.readline = rl;
 
     rl.on('line', (line) => {
       if (this.child === child) this.handleLine(line);
@@ -255,11 +268,10 @@ export class PmStreamClient {
     child.on('error', (err) => {
       if (this.child !== child) return;
       log(`[eigenflux:stream] Process error: ${err.message}`);
-      this.scheduleRestart();
     });
 
-    child.on('exit', (code, signal) => {
-      log(`[eigenflux:stream] Process exited (code=${code}, signal=${signal})`);
+    child.on('close', (code, signal) => {
+      log(`[eigenflux:stream] Process stdio closed (code=${code}, signal=${signal})`);
 
       if (this.child !== child || this.stopping || this.rolling) {
         return;
@@ -293,20 +305,30 @@ export class PmStreamClient {
       this.backoffMs = this.initialBackoffMs;
       this.consecutiveFailures = 0;
 
-      // Commit the resume cursor only after notification delivery. A failed
-      // delivery pins the cursor so a replacement can replay the failed page.
-      this.delivery = this.delivery.then(async () => {
-        await this.config.onPmEvent(event);
-        if (!this.cursorBlocked && event.data?.next_cursor) {
-          this.lastCursor = event.data.next_cursor;
-        }
-      }).catch((err) => {
-        this.cursorBlocked = true;
-        log(`[eigenflux:stream] PM event handler error: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      this.pendingEvents.push(event);
+      this.deliverPending();
     } catch (err) {
       log(`[eigenflux:stream] Failed to parse line: ${(err as Error).message}`);
     }
+  }
+
+  private deliverPending(): void {
+    if (this.delivering || !this.pendingEvents.length) return;
+    this.delivering = true;
+    this.delivery = (async () => {
+      while (this.pendingEvents.length) {
+        const event = this.pendingEvents[0];
+        await this.config.onPmEvent(event);
+        if (event.data?.next_cursor) this.lastCursor = event.data.next_cursor;
+        this.pendingEvents.shift();
+      }
+    })().catch((err) => {
+      // Backend fetch may already mark messages read. Retain the actual event;
+      // an older cursor cannot recover a failed channel notification.
+      log(`[eigenflux:stream] PM notification retained for retry (pending=${this.pendingEvents.length}): ${err instanceof Error ? err.message : String(err)}`);
+    }).finally(() => {
+      this.delivering = false;
+    });
   }
 
   private scheduleRestart(): void {
@@ -329,7 +351,7 @@ export class PmStreamClient {
       this.restartTimer = null;
       try {
         await this.waitForDelivery();
-        if (this.child === previousChild && this.childExited && !this.rolling) {
+        if (this.child === previousChild && this.childClosed && !this.rolling) {
           this.spawnStreamProcess();
         }
       } catch (error) {
