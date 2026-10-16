@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'bun:test';
@@ -30,7 +30,7 @@ test('config propagates independent identity to a CLI child', () => {
   const identity = JSON.parse(result.stdout);
   expect(identity.host).toBe('claude-code');
   expect(identity.mode).toBe('plugin');
-  expect(identity.plugin).toBe('0.0.14');
+  expect(identity.plugin).toBe(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 });
 
 for (const host of ['plugin', 'skill/1', 'skills', 'unknown', 'terminal/1']) {
