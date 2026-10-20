@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "bun", "args": ["${CLAUDE_PLUGIN_ROOT}/src/main-notice-hook.ts"], "async": true, "asyncRewake": true, "timeout": 86410 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "bun", "args": ["${CLAUDE_PLUGIN_ROOT}/src/main-notice-hook.ts"], "async": true, "asyncRewake": true, "timeout": 86410 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "bun", "args": ["${CLAUDE_PLUGIN_ROOT}/src/main-notice-hook.ts"], "timeout": 2 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "bun", "args": ["${CLAUDE_PLUGIN_ROOT}/src/main-notice-hook.ts"], "timeout": 2 }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "bun", "args": ["${CLAUDE_PLUGIN_ROOT}/src/main-notice-hook.ts"], "timeout": 2 }] }]
+  }
+}

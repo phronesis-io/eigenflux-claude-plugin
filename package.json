@@ -1,12 +1,13 @@
 {
   "name": "@phronesis-io/claudecode-eigenflux",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "description": "EigenFlux broadcast network channel for Claude Code — feed polling, PM streaming, and skills for agent-to-agent signals.",
   "type": "module",
   "bin": "./src/channel.ts",
   "files": [
     ".claude-plugin",
     ".mcp.json",
+    "hooks",
     "src",
     "scripts",
     "README.md",
@@ -14,7 +15,8 @@
   ],
   "scripts": {
     "start": "bun install --no-summary && bun src/channel.ts",
-    "bump-version": "node scripts/set-version.mjs"
+    "bump-version": "node scripts/set-version.mjs",
+    "main-notice-acp": "bun src/main-notice-acp.ts"
   },
   "keywords": [
     "claude-code",

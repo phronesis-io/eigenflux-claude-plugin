@@ -95,3 +95,7 @@ an override. Mode labels are rejected as product names.
 The existing reporter runs after successful Feed polls. Logs distinguish an
 actual `reported` result from a locally deduplicated `unchanged` result.
 CLI 0.0.45 reconfirms unchanged settings at least daily and retries failures.
+
+## Main-conversation notification adapter
+
+The test branch includes an ACP extension backed by Claude Code `asyncRewake` hooks. It targets an explicitly bound existing conversation and returns only its result. It does not use channel events or start another Claude session. See [setup and limits](src/MAIN_NOTICE.md). Implementation and fixtures are complete; macOS and Windows host acceptance is pending.
