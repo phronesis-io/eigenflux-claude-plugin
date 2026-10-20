@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { FeedPoller, type ExecFn } from './feed-poller.js';
 import type { CliResult } from './cli-executor.js';
+import { HeartbeatPlanRunner } from './heartbeat-plan-runner.js';
 
 function successFeed(): CliResult<unknown> {
   return {
@@ -129,4 +130,48 @@ test('continues polling Feed when the Heartbeat plan hook fails', async () => {
 
   expect(await poller.pollOnce()).not.toBeNull();
   expect(feedCalls).toBe(1);
+});
+
+test('real plan adapter stops before Feed for authentication failures, even when notification fails', async () => {
+  for (const kind of ['auth_required', 'auth_unavailable'] as const) {
+    for (const failedNotification of [false, true]) {
+      let feedCalls = 0;
+      let reminders = 0;
+      const runner = new HeartbeatPlanRunner('eigenflux', '/stable/home', 'staging', async <T>() => (
+        kind === 'auth_required' ? { kind, stderr: 'OWNER ACTION' }
+          : { kind: 'error', error: new Error('credential unavailable'), exitCode: 2,
+            stderr: 'UNAVAILABLE', authenticationUnavailable: true }
+      ) as CliResult<T>);
+      const poller = new FeedPoller({
+        serverName: 'staging', eigenfluxBin: 'eigenflux', pollIntervalOverrideSec: null,
+        onHeartbeatStart: () => runner.run(),
+        exec: async <T>() => { feedCalls += 1; return successFeed() as CliResult<T>; },
+        onFeedUpdate: async () => { throw new Error('blocked Feed must not deliver'); },
+        onAuthRequired: async (detail) => {
+          expect(detail).toBe('OWNER ACTION'); reminders += 1;
+          if (failedNotification) throw new Error('transport unavailable');
+        },
+      });
+      await poller.pollOnce();
+      await poller.pollOnce();
+      expect(feedCalls).toBe(0);
+      expect(reminders).toBe(kind === 'auth_required' ? 2 : 0);
+    }
+  }
+});
+
+test('future hook status retains the compatible fallback and authentication errors never latch in the poller', async () => {
+  let calls = 0;
+  let reminders = 0;
+  const poller = new FeedPoller({
+    serverName: 'staging', eigenfluxBin: 'eigenflux', pollIntervalOverrideSec: null,
+    onHeartbeatStart: async () => ({ kind: 'future-status' } as never),
+    exec: async <T>() => { calls += 1; return { kind: 'auth_required', stderr: 'AUTH' } as CliResult<T>; },
+    onFeedUpdate: async () => {},
+    onAuthRequired: async () => { reminders += 1; },
+  });
+  await poller.pollOnce();
+  await poller.pollOnce();
+  expect(calls).toBe(2);
+  expect(reminders).toBe(2);
 });

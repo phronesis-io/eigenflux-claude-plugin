@@ -7,6 +7,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createInterface, Interface as ReadlineInterface } from 'readline';
+import { StringDecoder } from 'node:string_decoder';
 
 const log = console.error;
 
@@ -46,7 +47,7 @@ export interface PmStreamClientConfig {
   serverName: string;
   eigenfluxBin: string;
   onPmEvent: (event: PmStreamEvent) => Promise<void>;
-  onAuthRequired: () => Promise<void>;
+  onAuthRequired: (detail: string) => Promise<void>;
   /** Test seams; production uses child_process.spawn and the exported defaults. */
   spawnFn?: SpawnFn;
   initialBackoffMs?: number;
@@ -66,6 +67,7 @@ export class PmStreamClient {
   private readline: ReadlineInterface | null = null;
   private stopping = false;
   private running = false;
+  private generation = 0;
   private lastCursor: string | null = null;
   private backoffMs: number;
   private consecutiveFailures = 0;
@@ -97,11 +99,13 @@ export class PmStreamClient {
 
     this.running = true;
     this.stopping = false;
+    const generation = ++this.generation;
     log(`[eigenflux:stream] Starting stream client for server=${this.config.serverName}`);
-    this.spawnStreamProcess();
+    this.spawnStreamProcess(generation);
   }
 
   async stop(): Promise<void> {
+    this.generation += 1;
     if (!this.running) {
       return;
     }
@@ -144,8 +148,8 @@ export class PmStreamClient {
     }
   }
 
-  private spawnStreamProcess(): void {
-    if (this.stopping || !this.running) {
+  private spawnStreamProcess(generation: number): void {
+    if (generation !== this.generation || this.stopping || !this.running) {
       return;
     }
 
@@ -166,23 +170,36 @@ export class PmStreamClient {
     this.readline = rl;
 
     rl.on('line', (line) => {
-      this.handleLine(line);
+      if (generation === this.generation && this.child === child) this.handleLine(line);
     });
 
+    let stderr = '';
+    const stderrDecoder = new StringDecoder('utf8');
     child.stderr?.on('data', (chunk: Buffer) => {
+      if (generation !== this.generation || this.child !== child) return;
+      // Retain the final structured CLI notice across arbitrary pipe chunks.
+      stderr = (stderr + stderrDecoder.write(chunk)).slice(-64 * 1024);
       const text = chunk.toString().trim();
       if (text) {
         log(`[eigenflux:stream] stderr: ${text}`);
       }
     });
 
-    child.on('error', (err) => {
+    child.once('error', (err) => {
+      if (generation !== this.generation) return;
       log(`[eigenflux:stream] Process error: ${err.message}`);
-      this.scheduleRestart();
     });
 
-    child.on('exit', (code, signal) => {
+    // close follows pipe drainage, so the owner_action cannot be truncated by exit.
+    child.once('close', (code, signal) => {
+      if (generation !== this.generation) return;
+      stderr = (stderr + stderrDecoder.end()).slice(-64 * 1024);
       log(`[eigenflux:stream] Process exited (code=${code}, signal=${signal})`);
+      if (this.child === child) this.child = null;
+      if (this.readline === rl) {
+        rl.close();
+        this.readline = null;
+      }
 
       if (this.stopping) {
         return;
@@ -190,16 +207,17 @@ export class PmStreamClient {
 
       if (code === EXIT_AUTH_REQUIRED) {
         log('[eigenflux:stream] Auth required');
-        this.config.onAuthRequired().then(() => {
-          this.scheduleRestart();
+        this.config.onAuthRequired(stderr.trim()).then(() => {
+          this.scheduleRestart(generation);
         }).catch((err) => {
+          if (generation !== this.generation) return;
           log(`[eigenflux:stream] Auth handler error: ${err instanceof Error ? err.message : String(err)}`);
-          this.scheduleRestart();
+          this.scheduleRestart(generation);
         });
         return;
       }
 
-      this.scheduleRestart();
+      this.scheduleRestart(generation);
     });
   }
 
@@ -229,8 +247,8 @@ export class PmStreamClient {
     }
   }
 
-  private scheduleRestart(): void {
-    if (this.stopping || !this.running) {
+  private scheduleRestart(generation: number): void {
+    if (generation !== this.generation || this.stopping || !this.running || this.restartTimer) {
       return;
     }
 
@@ -244,10 +262,12 @@ export class PmStreamClient {
 
     log(`[eigenflux:stream] Reconnecting in ${this.backoffMs}ms (failure #${this.consecutiveFailures})`);
 
-    this.restartTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (generation !== this.generation || this.restartTimer !== timer) return;
       this.restartTimer = null;
-      this.spawnStreamProcess();
+      this.spawnStreamProcess(generation);
     }, this.backoffMs);
+    this.restartTimer = timer;
 
     this.backoffMs = Math.min(
       this.backoffMs * BACKOFF_MULTIPLIER,

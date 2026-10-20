@@ -5,6 +5,7 @@
  */
 
 import { execFile } from 'child_process';
+import { authenticationUnavailable } from './auth-notices.js';
 
 const log = console.error;
 
@@ -15,7 +16,7 @@ export type CliResult<T> =
   | { kind: 'success'; data: T }
   | { kind: 'auth_required'; stderr: string }
   | { kind: 'not_installed'; bin: string }
-  | { kind: 'error'; error: Error; exitCode: number | null; stderr: string };
+  | { kind: 'error'; error: Error; exitCode: number | null; stderr: string; authenticationUnavailable?: boolean };
 
 export interface ExecOptions {
   timeout?: number;
@@ -99,6 +100,8 @@ export function execEigenflux<T>(
             error: new Error(stderr.trim() || error.message),
             exitCode: numericExit,
             stderr: stderr.trim(),
+            ...(numericExit === 2 && authenticationUnavailable(stderr)
+              ? { authenticationUnavailable: true } : {}),
           });
           return;
         }

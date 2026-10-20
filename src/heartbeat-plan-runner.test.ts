@@ -52,3 +52,26 @@ test('rejects a legacy plan without the central wake decision', async () => {
   const runner = new HeartbeatPlanRunner('eigenflux', '/stable/home', 'staging', exec);
   expect(await runner.run()).toBeNull();
 });
+
+test('retains CLI authentication failures as explicit blocked results', async () => {
+  for (const unavailable of [false, true]) {
+    const exec = async <T>() => (unavailable
+      ? { kind: 'error', error: new Error('credential service unavailable'), exitCode: 2,
+        stderr: 'CENTRAL UNAVAILABLE', authenticationUnavailable: true }
+      : { kind: 'auth_required', stderr: 'CENTRAL OWNER ACTION' }) as CliResult<T>;
+    const runner = new HeartbeatPlanRunner('eigenflux', '/stable/home', 'staging', exec);
+    expect(await runner.run()).toEqual({
+      kind: unavailable ? 'auth_unavailable' : 'auth_required',
+      stderr: unavailable ? 'CENTRAL UNAVAILABLE' : 'CENTRAL OWNER ACTION',
+    });
+  }
+});
+
+test('ordinary endpoint 503 and 429 remain nonblocking plan failures', async () => {
+  for (const code of [503, 429]) {
+    const runner = new HeartbeatPlanRunner('eigenflux', '/stable/home', 'staging', async <T>() => ({
+      kind: 'error', error: new Error(`HTTP ${code}`), exitCode: 2, stderr: `HTTP ${code}`,
+    }) as CliResult<T>);
+    expect(await runner.run()).toBeNull();
+  }
+});

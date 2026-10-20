@@ -13,7 +13,7 @@ import type { FeedResponse } from './types.js';
 import { execEigenflux, type CliResult, type ExecOptions } from './cli-executor.js';
 import { readPollIntervalSec } from './poll-interval.js';
 import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
-import type { HeartbeatPlan } from './heartbeat-plan-runner.js';
+import type { HeartbeatPlan, HeartbeatStartResult } from './heartbeat-plan-runner.js';
 
 const log = console.error;
 export type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise<CliResult<T>>;
@@ -34,7 +34,7 @@ export interface FeedPollerConfig {
    */
   onCliMissing?: () => Promise<void>;
   /** Returns this cycle's central Agent instructions before the single Feed poll. */
-  onHeartbeatStart?: () => Promise<HeartbeatPlan | null>;
+  onHeartbeatStart?: () => Promise<HeartbeatStartResult>;
   /** Fired after every successful poll, including empty feeds. Best-effort. */
   onPollSuccess?: () => Promise<void> | void;
   /** Test seam; production uses the shared CLI executor. */
@@ -49,7 +49,6 @@ export class FeedPoller {
   private config: FeedPollerConfig;
   private timeoutId: NodeJS.Timeout | null = null;
   private running = false;
-  private authPrompted = false;
   private deliveryInFlight = false;
   private deliveryStartedAt = 0;
   private deliverySkipCount = 0;
@@ -127,13 +126,23 @@ export class FeedPoller {
     try {
       let heartbeatPlan: HeartbeatPlan | null = null;
       if (this.config.onHeartbeatStart) {
+        let started: HeartbeatStartResult = null;
         try {
-          heartbeatPlan = await this.config.onHeartbeatStart();
+          started = await this.config.onHeartbeatStart();
         } catch (error) {
           log(
             `[eigenflux:feed] onHeartbeatStart hook error: ${error instanceof Error ? error.message : String(error)}`
           );
         }
+        if (started && 'kind' in started && started.kind === 'auth_required') {
+          await this.config.onAuthRequired(started.stderr);
+          return null;
+        }
+        if (started && 'kind' in started && started.kind === 'auth_unavailable') {
+          log(`[eigenflux:feed] Credential acquisition unavailable; cycle stopped: ${started.stderr}`);
+          return null;
+        }
+        heartbeatPlan = started && 'agent_prompt' in started ? started : null;
       }
 
       log(`[eigenflux:feed] Polling via CLI for server=${this.config.serverName}`);
@@ -157,10 +166,7 @@ export class FeedPoller {
 
       if (result.kind === 'auth_required') {
         log('[eigenflux:feed] Auth required');
-        if (!this.authPrompted) {
-          await this.config.onAuthRequired(result.stderr);
-          this.authPrompted = true;
-        }
+        await this.config.onAuthRequired(result.stderr);
         return null;
       }
 
@@ -175,10 +181,6 @@ export class FeedPoller {
         msg: 'success',
         data: result.data,
       };
-
-      // Reset the auth prompt on success (auth restored); the CLI-missing
-      // episode gate lives in the channel layer and is reset via onPollSuccess.
-      this.authPrompted = false;
 
       const items = data.data.items ?? [];
       const notifications = data.data.notifications ?? [];
