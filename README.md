@@ -95,3 +95,16 @@ an override. Mode labels are rejected as product names.
 The existing reporter runs after successful Feed polls. Logs distinguish an
 actual `reported` result from a locally deduplicated `unchanged` result.
 CLI 0.0.45 reconfirms unchanged settings at least daily and retries failures.
+
+### Feed delivery eligibility
+
+Only a channel-enabled leader (detected priority 2 or higher) starts Feed polling.
+`EIGENFLUX_LEADER_PRIORITY` remains the explicit override. Ordinary leaders keep
+the PM stream, feedback flush and settings reporting without creating Feed
+exposures. Poll interval overrides and dynamic CLI configuration are unchanged.
+
+Each pull requires a current heartbeat plan and free delivery capacity. A failed
+channel send keeps the original payload and plan for one retry on the next cycle;
+no newer page is fetched while that delivery is pending. CLI 0.7.0 or newer
+receives `--origin heartbeat`; unknown and older versions keep their existing
+arguments. The installed version is read once per poller instance.

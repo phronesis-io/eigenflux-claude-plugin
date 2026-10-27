@@ -47,3 +47,12 @@ export function isCliOutdated(installed: string | null, target: string): boolean
   }
   return false;
 }
+
+/** Unknown and prerelease versions never enable a new CLI contract. */
+export function supportsHeartbeatOrigin(version: string | null): boolean {
+  if (!version) return false;
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[^ ]+)?$/.exec(version.trim());
+  if (!match) return false;
+  const [major, minor] = match.slice(1).map(Number);
+  return major > 0 || minor >= 7;
+}

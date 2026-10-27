@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readPollIntervalSec } from './poll-interval.js';
 
 /**
  * EigenFlux Claude Code channel plugin.
@@ -22,7 +23,7 @@ import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CONFIG } from './config.js';
-import { LeaderElector, detectLeaderPriority } from './instance-leader.js';
+import { LeaderElector, detectLeaderPriority, PRIORITY_DEV_CHANNEL } from './instance-leader.js';
 import { FeedPoller } from './feed-poller.js';
 import { PmStreamClient } from './pm-stream.js';
 import { ProfileRefresher } from './profile-refresher.js';
@@ -256,6 +257,11 @@ feedPoller = new FeedPoller({
   async onHeartbeatStart() {
     return heartbeatPlanRunner.run();
   },
+  async onPollSkipped() {
+    void settingsReporter.report();
+    flushLoop.kick();
+    void profileRefresher?.refresh();
+  },
   async onPollSuccess() {
     // CLI is demonstrably present: close the missing-episode and complete a
     // pending version check (covers mid-session installs and early sends
@@ -319,17 +325,35 @@ profileRefresher = new ProfileRefresher({
 // ordinary sessions and takes leadership over from them.
 
 const leaderPriority = detectLeaderPriority();
+let settingsTimer: ReturnType<typeof setTimeout> | null = null;
+let ordinaryLeader = false;
+async function reportOrdinaryLeaderSettings(): Promise<void> {
+  if (!ordinaryLeader) return;
+  await settingsReporter.report();
+  const interval = CONFIG.FEED_POLL_INTERVAL_OVERRIDE_SEC
+    ?? await readPollIntervalSec(CONFIG.EIGENFLUX_BIN, CONFIG.EIGENFLUX_SERVER);
+  if (!ordinaryLeader) return;
+  settingsTimer = setTimeout(() => { void reportOrdinaryLeaderSettings(); }, interval * 1000);
+  settingsTimer.unref?.();
+}
+function stopOrdinaryLeaderSettings(): void {
+  ordinaryLeader = false;
+  if (settingsTimer) clearTimeout(settingsTimer);
+  settingsTimer = null;
+}
 const leaderElector = new LeaderElector({
   sockPath: path.join(os.homedir(), '.eigenflux', 'claude-plugin-leader.sock'),
   priority: leaderPriority,
   log,
   onAcquire() {
-    feedPoller?.start();
+    if (leaderPriority >= PRIORITY_DEV_CHANNEL) feedPoller?.start();
+    else { ordinaryLeader = true; void reportOrdinaryLeaderSettings(); }
     pmStreamClient?.start();
     profileRefresher?.start();
     flushLoop.start();
   },
   async onRelease() {
+    stopOrdinaryLeaderSettings();
     flushLoop.stop();
     profileRefresher?.stop();
     pmStreamClient?.stop();
@@ -341,6 +365,7 @@ leaderElector.start();
 
 async function shutdown(signal: string) {
   log(`[eigenflux] ${signal}`);
+  stopOrdinaryLeaderSettings();
   leaderElector.stop();
   flushLoop.stop();
   profileRefresher?.stop();
