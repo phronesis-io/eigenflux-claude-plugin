@@ -191,15 +191,98 @@ test('capacity and failed sends retain the original payload and retry once', asy
  expect(feedCalls).toBe(1);expect(attempts).toBe(2);expect(seen[0]).toEqual(seen[1]);expect(maintenance).toBe(2);
  await poller.pollOnce();expect(feedCalls).toBe(2);
 });
-test.each(['0.6.10','0.7.0','0.8.0','unknown'])('scheduled origin is gated for %s', async version=>{
+test.each(['0.6.10','0.7.0','0.8.0','unknown'])('scheduled origin is gated for %s', async (version: string)=>{
  const calls:string[][]=[];
  const poller=new FeedPoller({serverName:'test',eigenfluxBin:'eigenflux',pollIntervalOverrideSec:60,
  onHeartbeatStart:async()=>({agent_prompt:'plan',wake_on_empty:false}),
  exec:async<T>(_bin:string,args:string[])=>{calls.push(args);return {kind:'success',data:args[0]==='version'?{cli_version:version}:{items:[],notifications:[]}} as CliResult<T>},
  onFeedUpdate:async()=>{},onAuthRequired:async()=>{}});
- await poller.pollOnce();await poller.pollOnce();expect(calls.filter(args=>args[0]==='version')).toHaveLength(1);
+ await poller.pollOnce();await poller.pollOnce();expect(calls.filter(args=>args[0]==='version')).toHaveLength(2);
  for(const args of calls.filter(args=>args.includes('poll'))){expect(args.includes('--origin')).toBe(version==='0.7.0'||version==='0.8.0')}
 });
+test('re-reads the CLI version every cycle so upgrades, downgrades and unreadable versions take effect', async () => {
+  const versions: CliResult<unknown>[] = [
+    { kind: 'success', data: { cli_version: '0.6.10' } },
+    { kind: 'success', data: { cli_version: '0.7.0' } },
+    { kind: 'success', data: { cli_version: '0.6.10' } },
+    { kind: 'not_installed', bin: 'eigenflux' },
+    { kind: 'success', data: { cli_version: '0.7.0' } },
+  ];
+  const origins: boolean[] = [];
+  const poller = new FeedPoller({
+    serverName: 'test', eigenfluxBin: 'eigenflux', pollIntervalOverrideSec: 60,
+    onHeartbeatStart: async () => ({ agent_prompt: 'plan', wake_on_empty: false }),
+    exec: async <T>(_bin: string, args: string[]) => {
+      if (args[0] === 'version') return versions.shift() as CliResult<T>;
+      origins.push(args.includes('--origin'));
+      return successFeed() as CliResult<T>;
+    },
+    onFeedUpdate: async () => {}, onAuthRequired: async () => {},
+  });
+  for (let cycle = 0; cycle < 5; cycle++) await poller.pollOnce();
+  expect(origins).toEqual([false, true, false, false, true]);
+});
+
+function hungFeedPoller(deliveryTimeoutMs: number, state: { feedCalls: number; deliveries: number }, hangDeliveries = Infinity) {
+  return new FeedPoller({
+    serverName: 'test', eigenfluxBin: 'eigenflux', pollIntervalOverrideSec: 0.01, deliveryTimeoutMs,
+    onHeartbeatStart: async () => ({ agent_prompt: 'plan', wake_on_empty: true }),
+    exec: async <T>(_bin: string, args: string[]) => {
+      if (args[0] === 'version') return { kind: 'success', data: { cli_version: '0.6.10' } } as CliResult<T>;
+      state.feedCalls++;
+      return { kind: 'success', data: { items: [{ item_id: String(state.feedCalls) }], notifications: [] } } as CliResult<T>;
+    },
+    onFeedUpdate: () => (++state.deliveries <= hangDeliveries ? new Promise<void>(() => {}) : Promise.resolve()),
+    onAuthRequired: async () => {},
+  });
+}
+
+async function waitUntil(cond: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitUntil timeout');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test('a hung delivery times out as a failed attempt, retries once, then Feed polls again', async () => {
+  const state = { feedCalls: 0, deliveries: 0 };
+  const poller = hungFeedPoller(20, state);
+  poller.start();
+  try {
+    await waitUntil(() => state.feedCalls >= 2);
+    // Two timed-out attempts on the first payload before the next pull.
+    expect(state.deliveries).toBeGreaterThanOrEqual(2);
+  } finally {
+    await poller.stop();
+  }
+});
+
+test('a hung delivery that recovers on retry clears the payload and later cycles pull again', async () => {
+  const state = { feedCalls: 0, deliveries: 0 };
+  const poller = hungFeedPoller(20, state, 1);
+  poller.start();
+  try {
+    await waitUntil(() => state.feedCalls >= 2);
+    expect(state.deliveries).toBeGreaterThanOrEqual(2);
+  } finally {
+    await poller.stop();
+  }
+});
+
+test('stop() during a hung delivery returns once the delivery attempt times out', async () => {
+  const state = { feedCalls: 0, deliveries: 0 };
+  const poller = hungFeedPoller(50, state);
+  poller.start();
+  await waitUntil(() => state.deliveries === 1);
+  const started = Date.now();
+  await poller.stop();
+  expect(Date.now() - started).toBeLessThan(1_000);
+  const feedCallsAtStop = state.feedCalls;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(state.feedCalls).toBe(feedCallsAtStop);
+});
+
 test('null plan skips all Feed calls but keeps maintenance',async()=>{
  let calls=0,maintenance=0;
  const poller=new FeedPoller({serverName:'test',eigenfluxBin:'eigenflux',pollIntervalOverrideSec:60,onHeartbeatStart:async()=>null,

@@ -17,6 +17,15 @@ import { getInstalledCliVersion, supportsHeartbeatOrigin } from './cli-version.j
 import type { HeartbeatPlan, HeartbeatStartResult } from './heartbeat-plan-runner.js';
 
 const log = console.error;
+
+/**
+ * Upper bound for one channel send. The SDK stdio transport has no write
+ * timeout, so a host that stops reading stdout would otherwise hold the
+ * delivery slot (and stop()) forever. A timeout counts as a failed attempt.
+ */
+export const FEED_DELIVERY_TIMEOUT_MS = 300_000;
+const MAX_DELIVERY_ATTEMPTS = 2;
+
 export type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise<CliResult<T>>;
 
 export interface FeedPollerConfig {
@@ -42,6 +51,8 @@ export interface FeedPollerConfig {
   onPollSkipped?: () => Promise<void> | void;
   /** Test seam; production uses the shared CLI executor. */
   exec?: ExecFn;
+  /** Test seam; production uses FEED_DELIVERY_TIMEOUT_MS. */
+  deliveryTimeoutMs?: number;
 }
 
 export class FeedPoller {
@@ -50,7 +61,6 @@ export class FeedPoller {
   private running = false;
   private deliveryInFlight = false;
   private polling = false;
-  private cliVersion: Promise<string | null> | null = null;
   private pending: {data: FeedResponse; plan: HeartbeatPlan; attempts: number} | null = null;
   private activeDelivery: Promise<void> | null = null;
 
@@ -91,14 +101,10 @@ export class FeedPoller {
       this.timeoutId = null;
     }
 
-    // Wait for in-flight delivery to complete
+    // Wait for the in-flight delivery attempt; it settles within the delivery timeout.
     if (this.activeDelivery) {
-      log('[eigenflux:feed] Waiting for in-flight delivery to complete before stop');
-      try {
-        await this.activeDelivery;
-      } catch {
-        // Swallow — we're stopping anyway
-      }
+      log('[eigenflux:feed] Waiting for in-flight delivery attempt before stop');
+      await this.activeDelivery;
     }
   }
 
@@ -132,15 +138,22 @@ export class FeedPoller {
     if (!pending || this.deliveryInFlight) return;
     this.deliveryInFlight = true;
     pending.attempts++;
-    const delivery = Promise.resolve().then(() => this.config.onFeedUpdate(pending.data, pending.plan));
-    this.activeDelivery = delivery;
+    const timeoutMs = this.config.deliveryTimeoutMs ?? FEED_DELIVERY_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const delivery = Promise.race([
+      Promise.resolve().then(() => this.config.onFeedUpdate(pending.data, pending.plan)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`delivery timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    this.activeDelivery = delivery.then(() => {}, () => {});
     try {
       await delivery;
       this.pending = null;
     } catch (error) {
-      log(`[eigenflux:feed] Delivery attempt ${pending.attempts}/2 failed: ${String(error)}`);
-      if (pending.attempts >= 2) {
-        log('[eigenflux:feed] Dropping payload after two failed deliveries');
+      log(`[eigenflux:feed] Delivery attempt ${pending.attempts}/${MAX_DELIVERY_ATTEMPTS} failed: ${String(error)}`);
+      if (pending.attempts >= MAX_DELIVERY_ATTEMPTS) {
+        log(`[eigenflux:feed] ERROR dropping payload after ${MAX_DELIVERY_ATTEMPTS} failed deliveries`);
         this.pending = null;
       }
     } finally {
@@ -179,9 +192,11 @@ export class FeedPoller {
         log('[eigenflux:feed] Skipping poll: current heartbeat plan unavailable');
         return this.skipped();
       }
-      this.cliVersion ??= getInstalledCliVersion(this.config.eigenfluxBin, this.config.exec ?? execEigenflux);
-      const origin = supportsHeartbeatOrigin(await this.cliVersion) ? ['--origin', 'heartbeat'] : [];
-      const result = await (this.config.exec ?? execEigenflux)<FeedResponse['data']>(
+      // Re-read every cycle so a CLI upgrade or downgrade changes the argv on the next pull.
+      const exec = this.config.exec ?? execEigenflux;
+      const cliVersion = await getInstalledCliVersion(this.config.eigenfluxBin, exec);
+      const origin = supportsHeartbeatOrigin(cliVersion) ? ['--origin', 'heartbeat'] : [];
+      const result = await exec<FeedResponse['data']>(
         this.config.eigenfluxBin,
         ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json', ...origin]
       );

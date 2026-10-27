@@ -320,13 +320,15 @@ profileRefresher = new ProfileRefresher({
 //
 // One plugin instance per machine runs the background loops; the rest stay
 // standby (their pushes would be dropped by the host anyway unless their
-// session has the channel enabled). A session launched with
-// --dangerously-load-development-channels naming this plugin outranks
-// ordinary sessions and takes leadership over from them.
+// session has the channel enabled). A session whose --channels or
+// --dangerously-load-development-channels list names this plugin outranks
+// ordinary sessions and takes leadership over from them. Only such a
+// channel-enabled leader polls Feed.
 
 const leaderPriority = detectLeaderPriority();
 let settingsTimer: ReturnType<typeof setTimeout> | null = null;
 let ordinaryLeader = false;
+let feedDisabledWarned = false;
 async function reportOrdinaryLeaderSettings(): Promise<void> {
   if (!ordinaryLeader) return;
   await settingsReporter.report();
@@ -347,7 +349,14 @@ const leaderElector = new LeaderElector({
   log,
   onAcquire() {
     if (leaderPriority >= PRIORITY_DEV_CHANNEL) feedPoller?.start();
-    else { ordinaryLeader = true; void reportOrdinaryLeaderSettings(); }
+    else {
+      if (!feedDisabledWarned) {
+        feedDisabledWarned = true;
+        console.warn('[eigenflux] WARN Feed polling disabled: this Claude Code session is not channel-enabled; set EIGENFLUX_LEADER_PRIORITY=2 to override');
+      }
+      ordinaryLeader = true;
+      void reportOrdinaryLeaderSettings();
+    }
     pmStreamClient?.start();
     profileRefresher?.start();
     flushLoop.start();

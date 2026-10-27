@@ -9,8 +9,9 @@ const PLUGIN_VERSION = '0.0.16';
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
 // the user through an upgrade (new subcommands silently fail on older CLIs
-// otherwise). Scheduled backlog-aware pulls require 0.7.0.
-const EXPECTED_CLI_VERSION = '0.7.0';
+// otherwise). Structured credential failures and same-account recovery require 0.6.7.
+// Newer optional CLI arguments are version-gated where they are built.
+const EXPECTED_CLI_VERSION = '0.6.7';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var
