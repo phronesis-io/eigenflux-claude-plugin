@@ -5,6 +5,7 @@ type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise
 export interface HeartbeatPlan {
   agent_prompt: string;
   wake_on_empty: boolean;
+  cli_version?: string;
 }
 
 export type HeartbeatStartResult = HeartbeatPlan | null |
@@ -35,7 +36,8 @@ export class HeartbeatPlanRunner {
           'plan',
           '--format',
           'json',
-        ]
+        ],
+        { timeout: 300_000 }
       );
       if (result.kind === 'success') {
         if (typeof result.data?.agent_prompt !== 'string' ||

@@ -255,7 +255,15 @@ feedPoller = new FeedPoller({
     await sendCliRequired();
   },
   async onHeartbeatStart() {
-    return heartbeatPlanRunner.run();
+    const plan = await heartbeatPlanRunner.run();
+    if (plan && 'cli_version' in plan && plan.cli_version) {
+      try {
+        await pmStreamClient?.refreshForCliVersion(plan.cli_version);
+      } catch (error) {
+        log(`[eigenflux:stream] CLI update handoff deferred: ${String(error)}`);
+      }
+    }
+    return plan;
   },
   async onPollSkipped() {
     void settingsReporter.report();
@@ -277,6 +285,7 @@ feedPoller = new FeedPoller({
 });
 
 pmStreamClient = new PmStreamClient({
+  eigenfluxHome: CONFIG.EIGENFLUX_HOME,
   serverName: CONFIG.EIGENFLUX_SERVER,
   eigenfluxBin: CONFIG.EIGENFLUX_BIN,
   async onPmEvent(event) {
@@ -365,7 +374,7 @@ const leaderElector = new LeaderElector({
     stopOrdinaryLeaderSettings();
     flushLoop.stop();
     profileRefresher?.stop();
-    pmStreamClient?.stop();
+    await pmStreamClient?.stop();
     await feedPoller?.stop();
   },
 });
@@ -378,7 +387,7 @@ async function shutdown(signal: string) {
   leaderElector.stop();
   flushLoop.stop();
   profileRefresher?.stop();
-  pmStreamClient?.stop();
+  await pmStreamClient?.stop();
   await feedPoller?.stop();
 }
 process.on('SIGTERM', () => { shutdown('SIGTERM'); });

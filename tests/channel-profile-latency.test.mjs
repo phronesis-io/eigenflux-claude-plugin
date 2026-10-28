@@ -13,6 +13,7 @@ mock.module('../src/config.js', () => ({
 }));
 
 const events = [];
+const streamVersions = [];
 let finishProfile;
 let profileCalls = 0;
 const profileResult = new Promise((resolve) => { finishProfile = resolve; });
@@ -47,11 +48,17 @@ mock.module('../src/instance-leader.js', () => ({
     stop() {}
   },
 }));
-mock.module('../src/pm-stream.js', () => ({ PmStreamClient: class { start() {} stop() {} } }));
+mock.module('../src/pm-stream.js', () => ({
+  PmStreamClient: class {
+    start() {}
+    stop() {}
+    async refreshForCliVersion(version) { streamVersions.push(version); }
+  },
+}));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
 mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', supportsFeedBatches: () => false, supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
 mock.module('../src/heartbeat-plan-runner.js', () => ({
-  HeartbeatPlanRunner: class { async run() { return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
+  HeartbeatPlanRunner: class { async run() { return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false, cli_version: '0.6.6' }; } },
 }));
 
 const { FeedPoller } = await import('../src/feed-poller.ts');
@@ -79,4 +86,5 @@ try {
 }
 await new Promise((resolve) => setImmediate(resolve));
 assert.deepEqual(events, ['feed_update', 'feed_update', 'profile_refresh']);
+assert.deepEqual(streamVersions, ['0.6.6', '0.6.6'], 'successful plans reconcile the PM stream runtime version');
 console.log('channel profile latency regression passed');
