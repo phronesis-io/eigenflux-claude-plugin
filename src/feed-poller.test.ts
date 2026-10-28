@@ -191,36 +191,39 @@ test('capacity and failed sends retain the original payload and retry once', asy
  expect(feedCalls).toBe(1);expect(attempts).toBe(2);expect(seen[0]).toEqual(seen[1]);expect(maintenance).toBe(2);
  await poller.pollOnce();expect(feedCalls).toBe(2);
 });
-test.each(['0.6.10','0.7.0','0.8.0','unknown'])('scheduled origin is gated for %s', async (version: string)=>{
+test.each(['0.6.10','0.7.0','0.7.1','0.8.0','unknown','0.7.1-rc.1'])('scheduled origin is gated for %s', async (version: string)=>{
  const calls:string[][]=[];
  const poller=new FeedPoller({serverName:'test',eigenfluxBin:'eigenflux',pollIntervalOverrideSec:60,
  onHeartbeatStart:async()=>({agent_prompt:'plan',wake_on_empty:false}),
  exec:async<T>(_bin:string,args:string[])=>{calls.push(args);return {kind:'success',data:args[0]==='version'?{cli_version:version}:{items:[],notifications:[]}} as CliResult<T>},
  onFeedUpdate:async()=>{},onAuthRequired:async()=>{}});
  await poller.pollOnce();await poller.pollOnce();expect(calls.filter(args=>args[0]==='version')).toHaveLength(2);
- for(const args of calls.filter(args=>args.includes('poll'))){expect(args.includes('--origin')).toBe(version==='0.7.0'||version==='0.8.0')}
+ for(const args of calls.filter(args=>args.includes('poll'))){expect(args.includes('--batch')).toBe(version==='0.7.1'||version==='0.8.0');if(args.includes('--batch'))expect(args[args.indexOf('--batch')+1]).toBe('5');expect(args.includes('--origin')).toBe(version==='0.7.0'||version==='0.7.1'||version==='0.8.0')}
 });
 test('re-reads the CLI version every cycle so upgrades, downgrades and unreadable versions take effect', async () => {
   const versions: CliResult<unknown>[] = [
     { kind: 'success', data: { cli_version: '0.6.10' } },
-    { kind: 'success', data: { cli_version: '0.7.0' } },
+    { kind: 'success', data: { cli_version: '0.7.1' } },
     { kind: 'success', data: { cli_version: '0.6.10' } },
     { kind: 'not_installed', bin: 'eigenflux' },
-    { kind: 'success', data: { cli_version: '0.7.0' } },
+    { kind: 'success', data: { cli_version: '0.7.1' } },
   ];
   const origins: boolean[] = [];
+  const batches: boolean[] = [];
   const poller = new FeedPoller({
     serverName: 'test', eigenfluxBin: 'eigenflux', pollIntervalOverrideSec: 60,
     onHeartbeatStart: async () => ({ agent_prompt: 'plan', wake_on_empty: false }),
     exec: async <T>(_bin: string, args: string[]) => {
       if (args[0] === 'version') return versions.shift() as CliResult<T>;
       origins.push(args.includes('--origin'));
+      batches.push(args.includes('--batch'));
       return successFeed() as CliResult<T>;
     },
     onFeedUpdate: async () => {}, onAuthRequired: async () => {},
   });
   for (let cycle = 0; cycle < 5; cycle++) await poller.pollOnce();
   expect(origins).toEqual([false, true, false, false, true]);
+  expect(batches).toEqual([false, true, false, false, true]);
 });
 
 function hungFeedPoller(deliveryTimeoutMs: number, state: { feedCalls: number; deliveries: number }, hangDeliveries = Infinity) {

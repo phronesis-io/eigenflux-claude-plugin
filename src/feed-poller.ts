@@ -13,7 +13,7 @@ import type { FeedResponse } from './types.js';
 import { execEigenflux, type CliResult, type ExecOptions } from './cli-executor.js';
 import { readPollIntervalSec } from './poll-interval.js';
 import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
-import { getInstalledCliVersion, supportsHeartbeatOrigin } from './cli-version.js';
+import { getInstalledCliVersion, supportsHeartbeatOrigin, supportsFeedBatches } from './cli-version.js';
 import type { HeartbeatPlan, HeartbeatStartResult } from './heartbeat-plan-runner.js';
 
 const log = console.error;
@@ -198,7 +198,7 @@ export class FeedPoller {
       const origin = supportsHeartbeatOrigin(cliVersion) ? ['--origin', 'heartbeat'] : [];
       const result = await exec<FeedResponse['data']>(
         this.config.eigenfluxBin,
-        ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json', ...origin]
+        ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json', ...(supportsFeedBatches(cliVersion) ? ['--batch', '5'] : []), ...origin]
       );
       if (result.kind === 'not_installed') {
         await this.config.onCliMissing?.();

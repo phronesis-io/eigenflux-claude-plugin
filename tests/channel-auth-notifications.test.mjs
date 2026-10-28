@@ -67,7 +67,7 @@ mock.module('../src/pm-stream.js', () => ({
   PmStreamClient: class { constructor(config) { pmConfig = config; } start() {} stop() {} },
 }));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
-mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.6.7', supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
+mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.6.7', supportsFeedBatches: () => false, supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
 const { FeedPoller } = await import('../src/feed-poller.ts');
 mock.module('../src/feed-poller.js', () => ({
   FeedPoller: class extends FeedPoller {
