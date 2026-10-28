@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { LeaderElector } from './instance-leader.js';
+import { LeaderElector, commandEnablesChannel } from './instance-leader.js';
 
 function tmpSock(): string {
   // Keep the path short — unix socket paths are capped at ~104 bytes on darwin.
@@ -150,5 +150,31 @@ describe('LeaderElector', () => {
     expect(b.acquired).toBe(1);
 
     frozen.close();
+  });
+});
+
+describe('commandEnablesChannel', () => {
+  test.each([
+    'claude --dangerously-load-development-channels plugin:eigenflux@eigenflux-marketplace',
+    'node /opt/claude/cli.js --dangerously-load-development-channels server:eigenflux',
+    'claude --channels plugin:eigenflux@eigenflux-marketplace',
+    'claude --channels=plugin:eigenflux@eigenflux-marketplace --model opus',
+    'claude --channels plugin:telegram@claude-plugins-official plugin:eigenflux@eigenflux-marketplace',
+    'claude --resume abc --channels plugin:eigenflux@internal-mirror',
+  ])('matches %s', (command: string) => {
+    expect(commandEnablesChannel(command)).toBe(true);
+  });
+
+  test.each([
+    'claude',
+    'claude --channels plugin:telegram@claude-plugins-official',
+    'claude --channels plugin:telegram@claude-plugins-official --add-dir /work/eigenflux',
+    'claude --channels plugin:eigenflux-extra@eigenflux-marketplace',
+    'claude --channels plugin:eigenflux@',
+    'claude --channels server:eigenflux-dev',
+    'claude --model opus plugin:eigenflux@eigenflux-marketplace',
+    'claude --dangerously-load-development-channels server:webhook /tmp/eigenflux',
+  ])('does not match %s', (command: string) => {
+    expect(commandEnablesChannel(command)).toBe(false);
   });
 });

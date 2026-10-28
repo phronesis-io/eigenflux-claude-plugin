@@ -8,6 +8,9 @@ export interface HeartbeatPlan {
   cli_version?: string;
 }
 
+export type HeartbeatStartResult = HeartbeatPlan | null |
+  { kind: 'auth_required' | 'auth_unavailable'; stderr: string } | { kind: 'not_installed' };
+
 export class HeartbeatPlanRunner {
   private inFlight = false;
 
@@ -18,7 +21,7 @@ export class HeartbeatPlanRunner {
     private readonly exec: ExecFn = execEigenflux
   ) {}
 
-  async run(): Promise<HeartbeatPlan | null> {
+  async run(): Promise<HeartbeatStartResult> {
     if (this.inFlight) return null;
     this.inFlight = true;
     try {
@@ -47,6 +50,11 @@ export class HeartbeatPlanRunner {
       const detail = result.kind === 'error' ? result.error.message
         : result.kind === 'auth_required' ? result.stderr : result.bin;
       console.error(`[eigenflux:heartbeat] plan skipped: ${result.kind}: ${detail}`);
+      if (result.kind === 'not_installed') return { kind: 'not_installed' };
+      if (result.kind === 'auth_required') return { kind: 'auth_required', stderr: result.stderr };
+      if (result.kind === 'error' && result.authenticationUnavailable) {
+        return { kind: 'auth_unavailable', stderr: result.stderr };
+      }
       return null;
     } catch (error) {
       console.error(

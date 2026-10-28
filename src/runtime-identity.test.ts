@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'bun:test';
+import { CONFIG } from './config.js';
 import { resolveRuntimeHost } from './runtime-identity.js';
 
 test('the native product has no invented version', () => {
@@ -30,7 +31,7 @@ test('config propagates independent identity to a CLI child', () => {
   const identity = JSON.parse(result.stdout);
   expect(identity.host).toBe('claude-code');
   expect(identity.mode).toBe('plugin');
-  expect(identity.plugin).toBe(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+  expect(identity.plugin).toBe(CONFIG.PLUGIN_VERSION);
 });
 
 for (const host of ['plugin', 'skill/1', 'skills', 'unknown', 'terminal/1']) {

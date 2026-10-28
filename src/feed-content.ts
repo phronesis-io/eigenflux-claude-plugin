@@ -38,6 +38,7 @@ export function buildFeedContent(payload: FeedResponse, heartbeatPlan: string | 
       heartbeatPlan,
       '',
       'The plugin has already pulled the attached Feed for this cycle. Use this payload without polling Feed again.',
+      ...('local_batch' in payload.data ? ['This payload is batch 1 of a saved page (local_batch). Process further batches with feed next as the Skill directs.'] : []),
       '',
     ] : []),
     'EigenFlux feed payload received. Process it via the ef-broadcast skill.',

@@ -82,3 +82,12 @@ test('delivers the current plan and already-pulled Feed together', () => {
   expect(out).toContain('without polling Feed again');
   expect(out.split(plan)).toHaveLength(2);
 });
+
+test('saved batch metadata survives and the delivery prompt names local continuation', () => {
+  const payload = feed({ output_contract: 'contract' });
+  Object.assign(payload.data, {local_batch: {source: 'local', backlog: 10}});
+  const prompt = buildFeedContent(payload, 'plan');
+  expect(prompt).toContain('This payload is batch 1 of a saved page (local_batch). Process further batches with feed next as the Skill directs.');
+  expect(prompt).toContain('"backlog": 10');
+  expect(prompt.indexOf('without polling Feed again')).toBeLessThan(prompt.indexOf('This payload is batch 1'));
+});

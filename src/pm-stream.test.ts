@@ -112,6 +112,95 @@ test('exit code 4 calls onAuthRequired and still reconnects', async () => {
   await h.client.stop();
 });
 
+test('authentication diagnostics include chunks drained after process exit', async () => {
+  const details: string[] = [];
+  const h = makeHarness({ onAuthRequired: async (detail) => { details.push(detail); } });
+  h.client.start();
+  const child = h.spawns[0].child;
+  const diagnostic = 'warning\n{"owner_action":"请恢复原账号"}\n';
+  const encoded = Buffer.from(diagnostic);
+  const split = encoded.indexOf(Buffer.from('请')) + 1;
+  child.stderr.write(encoded.subarray(0, split));
+  child.emit('exit', EXIT_AUTH_REQUIRED, null);
+  await settle(1);
+  expect(details).toEqual([]);
+  child.stderr.write(encoded.subarray(split));
+  child.emit('close', EXIT_AUTH_REQUIRED, null);
+  await settle(1);
+  expect(details).toEqual([diagnostic.trim()]);
+  await h.client.stop();
+});
+
+test('spawn errors followed by close schedule only one restart', async () => {
+  const h = makeHarness();
+  h.client.start();
+  h.spawns[0].child.emit('error', Object.assign(new Error('missing CLI'), { code: 'ENOENT' }));
+  h.spawns[0].child.emit('close', -2, null);
+  await settle(7);
+  expect(h.spawns.length).toBe(2);
+  await h.client.stop();
+});
+
+test('stop does not wait for an already-closed child', async () => {
+  const h = makeHarness({ stopGraceMs: 10_000 });
+  h.client.start();
+  const child = h.spawns[0].child;
+  child.emit('close', 1, null);
+  await h.client.stop();
+  expect(child.killed).toBe(false);
+});
+
+for (const outcome of ['resolve', 'reject'] as const) {
+  test(`an old authentication reminder ${outcome} cannot restart a new stream generation`, async () => {
+    let finish!: () => void;
+    const reminder = new Promise<void>((resolve, reject) => {
+      finish = outcome === 'resolve' ? resolve : () => reject(new Error('old notification failed'));
+    });
+    const h = makeHarness({ onAuthRequired: () => reminder });
+    h.client.start();
+    h.spawns[0].child.emit('close', EXIT_AUTH_REQUIRED, null);
+    await h.client.stop();
+    h.client.start();
+    const current = h.spawns[1].child;
+    finish();
+    await settle(50);
+    expect(h.spawns.length).toBe(2);
+    current.stdout.write(JSON.stringify({ type: 'pm', data: { next_cursor: 'current-generation' } }) + '\n');
+    await settle(1);
+    expect(h.client.getLastCursor()).toBe('current-generation');
+    expect(h.pmEvents.length).toBe(1);
+    await h.client.stop();
+    expect(current.killed).toBe(true);
+    await settle(30);
+    expect(h.spawns.length).toBe(2);
+  });
+}
+
+test('late child events after stop/start cannot clear the current stream or its reader', async () => {
+  const h = makeHarness();
+  h.client.start();
+  const old = h.spawns[0].child;
+  old.kill = () => { old.killed = true; return true; };
+  const stopping = h.client.stop();
+  h.client.start();
+  expect(h.spawns.length).toBe(1); // Never overlap an unconfirmed old process.
+  old.emit('exit', 1, null);
+  old.emit('close', 1, null);
+  await stopping;
+  h.client.start();
+  const current = h.spawns[1].child;
+  old.emit('error', new Error('late old process error'));
+  old.emit('exit', 1, null);
+  old.emit('close', 1, null);
+  current.stdout.write(JSON.stringify({ type: 'pm', data: { next_cursor: 'new-cursor' } }) + '\n');
+  await settle(30);
+  expect(h.spawns.length).toBe(2);
+  expect(h.client.getLastCursor()).toBe('new-cursor');
+  expect(h.pmEvents.length).toBe(1);
+  await h.client.stop();
+  expect(current.killed).toBe(true);
+});
+
 test('gives up after maxConsecutiveFailures and stops running', async () => {
   const h = makeHarness({ maxConsecutiveFailures: 3 });
   h.client.start();

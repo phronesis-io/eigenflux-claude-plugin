@@ -4,13 +4,14 @@ import { resolveRuntimeHost } from './runtime-identity.js';
 
 // Single source of truth for the plugin version at runtime. Kept in sync with
 // package.json and .claude-plugin/plugin.json by scripts/set-version.mjs.
-const PLUGIN_VERSION = '0.0.15';
+const PLUGIN_VERSION = '0.0.17';
 
 // Minimum eigenflux CLI version this plugin build expects. When the installed
 // CLI is older, the channel emits a cli_outdated event so the agent can guide
 // the user through an upgrade (new subcommands silently fail on older CLIs
-// otherwise). Central heartbeat and profile tasks require CLI 0.0.46.
-const EXPECTED_CLI_VERSION = '0.0.46';
+// otherwise). Structured credential failures and same-account recovery require 0.6.7.
+// Newer optional CLI arguments are version-gated where they are built.
+const EXPECTED_CLI_VERSION = '0.6.7';
 
 // Poll interval: the CLI config key `feed_poll_interval` is the runtime source
 // (read fresh before each scheduling, same as the OpenClaw plugin). The env var

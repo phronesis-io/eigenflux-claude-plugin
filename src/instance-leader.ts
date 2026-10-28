@@ -13,8 +13,9 @@
  * periodically retries, so leadership fails over when the leader's session
  * exits.
  *
- * Priority: an instance whose ancestor `claude` process was launched with
- * `--dangerously-load-development-channels` naming this plugin outranks
+ * Priority: an instance whose ancestor `claude` process enables this plugin's
+ * channel (`--channels` or `--dangerously-load-development-channels` with a
+ * `plugin:eigenflux@<marketplace>` or `server:eigenflux` entry) outranks
  * ordinary instances. A higher-priority challenger causes the current leader
  * to abdicate (stop loops, release the socket) so the channel-enabled session
  * takes over. Equal priority never preempts — first holder wins.
@@ -47,11 +48,37 @@ import { execFileSync } from 'node:child_process';
 export const PRIORITY_DEV_CHANNEL = 2;
 export const PRIORITY_DEFAULT = 1;
 
-const DEV_CHANNEL_FLAG = '--dangerously-load-development-channels';
+const CHANNEL_FLAGS = ['--channels', '--dangerously-load-development-channels'];
+
+/** Claude Code channel entries are `plugin:<name>@<marketplace>` or `server:<name>`. */
+function entryNamesPlugin(entry: string, pluginName: string): boolean {
+  const pluginPrefix = `plugin:${pluginName}@`;
+  return entry === `server:${pluginName}`
+    || (entry.startsWith(pluginPrefix) && entry.length > pluginPrefix.length);
+}
 
 /**
- * Walk up the process tree looking for an ancestor launched with the
- * dev-channels flag that names this plugin. Returns the election priority.
+ * True when a command line enables this plugin's channel. Both channel flags
+ * are variadic (`--channels a b`, `--channels=a`); every following non-option
+ * token is an entry.
+ */
+export function commandEnablesChannel(command: string, pluginName = 'eigenflux'): boolean {
+  let inChannelFlag = false;
+  for (const token of command.trim().split(/\s+/)) {
+    if (token.startsWith('-')) {
+      const eq = token.indexOf('=');
+      inChannelFlag = CHANNEL_FLAGS.includes(eq > 0 ? token.slice(0, eq) : token);
+      if (inChannelFlag && eq > 0 && entryNamesPlugin(token.slice(eq + 1), pluginName)) return true;
+      continue;
+    }
+    if (inChannelFlag && entryNamesPlugin(token, pluginName)) return true;
+  }
+  return false;
+}
+
+/**
+ * Walk up the process tree looking for an ancestor whose command line enables
+ * this plugin's channel. Returns the election priority.
  *
  * `EIGENFLUX_LEADER_PRIORITY` overrides detection (useful in tests and as an
  * operator escape hatch).
@@ -67,7 +94,8 @@ export function detectLeaderPriority(pluginName = 'eigenflux', maxDepth = 10): n
   for (let depth = 0; depth < maxDepth && pid > 1; depth++) {
     let line: string;
     try {
-      line = execFileSync('ps', ['-o', 'ppid=,command=', '-p', String(pid)], {
+      // -ww: never truncate the command line (macOS and Linux procps).
+      line = execFileSync('ps', ['-ww', '-o', 'ppid=,command=', '-p', String(pid)], {
         encoding: 'utf8',
       }).trim();
     } catch {
@@ -76,7 +104,7 @@ export function detectLeaderPriority(pluginName = 'eigenflux', maxDepth = 10): n
     const m = line.match(/^\s*(\d+)\s+(.*)$/s);
     if (!m) return PRIORITY_DEFAULT;
     const [, ppidStr, command] = m;
-    if (command.includes(DEV_CHANNEL_FLAG) && command.includes(pluginName)) {
+    if (commandEnablesChannel(command, pluginName)) {
       return PRIORITY_DEV_CHANNEL;
     }
     pid = Number(ppidStr);

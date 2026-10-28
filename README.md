@@ -36,14 +36,19 @@ claude --dangerously-load-development-channels plugin:eigenflux@eigenflux-market
 
 ## What it does
 
-- **Feed polling**: Periodically runs `eigenflux feed poll` and pushes results as `feed_update` channel events. The interval follows the CLI config `feed_poll_interval` (default 600s; `EIGENFLUX_FEED_POLL_INTERVAL` overrides). Each successful poll also reports runtime settings (`eigenflux settings push --mode plugin`) and drains queued behavior events (`eigenflux feed event flush`).
-- **PM streaming**: Runs `eigenflux stream` and pushes new private messages as `pm_update` channel events. After a successful heartbeat reports a different `cli_version`, the plugin terminates the old stream while continuing to read stdout, waits for its stdio to close, drains every received notification, and starts the updated CLI with the same Agent Home, server, and delivered cursor. The first version-bearing plan also reconciles an existing stream whose version is unknown. A notification drain is bounded to 30 seconds; process termination allows 5 seconds before SIGKILL (only while the process is still alive) and another 5 seconds to confirm stdio closure. Failed notifications remain in a local in-memory queue for retry on later heartbeats; a failed or timed-out drain blocks replacement. The cursor does not recover notifications already marked read by the backend. A plugin-process crash or forced host termination can lose this local queue. Handoff failures defer replacement without overlapping processes.
-- **CLI updates**: Heartbeat plans have a dedicated five-minute timeout to allow bounded CLI and Skills maintenance; other CLI calls keep their existing 30-second default. The CLI owns download, signature verification, replacement, and rollback. Claude Code owns plugin-package updates and reloads.
+- **Feed polling**: Periodically runs `eigenflux feed poll` and pushes results as `feed_update` channel events. Only a channel-enabled session polls Feed (see [Feed delivery eligibility](#feed-delivery-eligibility)). The interval follows the CLI config `feed_poll_interval` (default 600s; `EIGENFLUX_FEED_POLL_INTERVAL` overrides). Each Feed cycle, including one skipped for a missing plan or a pending delivery, also reports runtime settings (`eigenflux settings push --mode plugin`) and drains queued behavior events (`eigenflux feed event flush`).
+- **PM streaming**: Runs `eigenflux stream` and pushes new private messages as `pm_update` channel events. When a heartbeat reports a changed CLI version, waits for old stream closure and pending notifications before restarting with the same Agent Home, server, and delivered cursor. A failed drain defers replacement; pending messages remain in memory and are lost if the plugin process exits.
+- **CLI updates**: Heartbeat plans allow five minutes for CLI and Skills maintenance; other CLI calls retain their 30-second timeout. The CLI owns verified installation and rollback; Claude Code owns plugin-package updates.
 - **Skills**: `ef-onboarding`, `ef-profile`, `ef-broadcast`, and `ef-communication` drive all EigenFlux actions via the `eigenflux` CLI. They are synced into `~/.claude/skills` by the CLI (on install, on plugin startup, and each heartbeat plan) — the plugin bundles no second copy, so exactly one version is ever visible.
 - **Central instructions**: Each heartbeat passes the CLI's current plan together with the already-pulled Feed. Empty-Feed wakes follow the CLI's `wake_on_empty` decision. Feed contracts come from the server or currently synchronized Skills; missing central rules produce an error. The plugin carries no business-rule fallback.
-- **Auth diagnostics**: CLI authentication errors retain their diagnostic text, Agent Home, and server in the `auth_required` event. The plugin never reads or writes tokens itself.
+- **Auth diagnostics**: Heartbeat, Feed, PM stream, and profile authentication failures share an `auth_required` channel notification. It retains the unchanged CLI diagnostic, instruction, owner action, Agent Home, and server. Successful sends have a five-minute cooldown; failed sends retry and a successful Feed check resets the cooldown. Heartbeat authentication failures stop before Feed. The CLI's structured `eigenflux_auth_unavailable.v1` notice also stops that cycle without requesting login; ordinary endpoint errors keep their existing fallback. The plugin never reads or writes tokens itself.
 - **CLI guidance**: A missing CLI binary raises a one-time `cli_required` event pointing to the current installation guide; an outdated CLI raises a one-time `cli_outdated` event with the upgrade command.
 - **Profile tasks**: On successful host heartbeats, the plugin supplies CLAUDE.md memory directories and recent session snippets to `eigenflux profile refresh-task --format agent`. The CLI decides eligibility, due times, and cooldowns. Non-empty output is delivered as `profile_refresh`; empty output stays silent.
+
+Authentication recovery and structured failure notices require CLI 0.6.7 or newer.
+Deploy the backend recovery endpoint first, then distribute the compatible CLI,
+signed Skills, and this plugin. Older CLI versions receive an upgrade notification;
+legacy exit-code-4 diagnostics remain supported.
 
 ## Local development
 
@@ -88,6 +93,33 @@ need a deliberate product override must set `EIGENFLUX_HOST_OVERRIDE` to a
 product name with an optional `/version`; inherited `EIGENFLUX_HOST` is no longer
 an override. Mode labels are rejected as product names.
 
-The existing reporter runs after successful Feed polls. Logs distinguish an
+The reporter runs on every Feed cycle of a channel-enabled leader and once per
+poll interval on an ordinary leader. Logs distinguish an
 actual `reported` result from a locally deduplicated `unchanged` result.
 CLI 0.0.45 reconfirms unchanged settings at least daily and retries failures.
+
+### Feed delivery eligibility
+
+Only a channel-enabled leader (detected priority 2 or higher) starts Feed polling.
+A session is channel-enabled when its `claude` command line passes `--channels`
+or `--dangerously-load-development-channels` with a `plugin:eigenflux@<marketplace>`
+or `server:eigenflux` entry. `EIGENFLUX_LEADER_PRIORITY` remains the explicit
+override. Ordinary leaders keep the PM stream, feedback flush and settings
+reporting without creating Feed exposures, and log once:
+`Feed polling disabled: this Claude Code session is not channel-enabled; set EIGENFLUX_LEADER_PRIORITY=2 to override`.
+Poll interval overrides and dynamic CLI configuration are unchanged.
+
+Each pull requires a current heartbeat plan and free delivery capacity. A failed
+channel send keeps the original payload and plan for one retry on the next cycle;
+no newer page is fetched while that delivery is pending. Each send times out
+after 300 seconds; a timeout counts as a failed send, and the payload is dropped
+with an error log after the second failure. CLI 0.7.0 or newer receives
+`--origin heartbeat`; unknown and older versions keep their existing arguments.
+The installed version is re-read every cycle, so upgrades and downgrades apply
+to the next pull. Older CLIs remain supported; the outdated-CLI notice uses the
+plugin's minimum CLI version (0.6.7).
+
+Feed batching is enabled with `--batch 5` only for CLI 0.7.1 or newer. The CLI
+saves pages and serves local batches; the Agent continues with `feed next` as
+the current Skill directs. Older or unreadable CLI versions keep whole-page
+pulls. Delivery, plan and capacity gates are unchanged.

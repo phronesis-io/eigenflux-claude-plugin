@@ -1,6 +1,6 @@
 /**
  * Installed-CLI version detection and comparison, for the one-time
- * cli_outdated channel event at startup.
+ * cli_outdated channel event and per-cycle Feed argument gates.
  *
  * All logging goes to stderr (stdout reserved for MCP stdio transport).
  */
@@ -46,4 +46,24 @@ export function isCliOutdated(installed: string | null, target: string): boolean
     if (x !== y) return x < y;
   }
   return false;
+}
+
+/**
+ * `feed poll --origin heartbeat` requires CLI 0.7.0. Unknown and prerelease
+ * versions never enable a new CLI contract.
+ */
+export function supportsHeartbeatOrigin(version: string | null): boolean {
+  if (!version) return false;
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[^ ]+)?$/.exec(version.trim());
+  if (!match) return false;
+  const [major, minor] = match.slice(1).map(Number);
+  return major > 0 || minor >= 7;
+}
+
+export function supportsFeedBatches(version: unknown): boolean {
+  if (typeof version !== 'string') return false;
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[^ ]+)?$/.exec(version.trim());
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major > 0 || minor > 7 || (minor === 7 && patch >= 1);
 }

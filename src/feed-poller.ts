@@ -13,9 +13,19 @@ import type { FeedResponse } from './types.js';
 import { execEigenflux, type CliResult, type ExecOptions } from './cli-executor.js';
 import { readPollIntervalSec } from './poll-interval.js';
 import { DEFAULT_POLL_INTERVAL_SEC } from './config.js';
-import type { HeartbeatPlan } from './heartbeat-plan-runner.js';
+import { getInstalledCliVersion, supportsHeartbeatOrigin, supportsFeedBatches } from './cli-version.js';
+import type { HeartbeatPlan, HeartbeatStartResult } from './heartbeat-plan-runner.js';
 
 const log = console.error;
+
+/**
+ * Upper bound for one channel send. The SDK stdio transport has no write
+ * timeout, so a host that stops reading stdout would otherwise hold the
+ * delivery slot (and stop()) forever. A timeout counts as a failed attempt.
+ */
+export const FEED_DELIVERY_TIMEOUT_MS = 300_000;
+const MAX_DELIVERY_ATTEMPTS = 2;
+
 export type ExecFn = <T>(bin: string, args: string[], options?: ExecOptions) => Promise<CliResult<T>>;
 
 export interface FeedPollerConfig {
@@ -34,25 +44,24 @@ export interface FeedPollerConfig {
    */
   onCliMissing?: () => Promise<void>;
   /** Returns this cycle's central Agent instructions before the single Feed poll. */
-  onHeartbeatStart?: () => Promise<HeartbeatPlan | null>;
+  onHeartbeatStart?: () => Promise<HeartbeatStartResult>;
   /** Fired after every successful poll, including empty feeds. Best-effort. */
   onPollSuccess?: () => Promise<void> | void;
+  /** Maintenance continues when polling is held for plan or capacity. */
+  onPollSkipped?: () => Promise<void> | void;
   /** Test seam; production uses the shared CLI executor. */
   exec?: ExecFn;
+  /** Test seam; production uses FEED_DELIVERY_TIMEOUT_MS. */
+  deliveryTimeoutMs?: number;
 }
-
-// Guard: notifier delivery may take longer than the poll interval,
-// so we skip overlapping deliveries to avoid duplicate notifications.
-const DELIVERY_TIMEOUT_MS = 300_000;
 
 export class FeedPoller {
   private config: FeedPollerConfig;
   private timeoutId: NodeJS.Timeout | null = null;
   private running = false;
-  private authPrompted = false;
   private deliveryInFlight = false;
-  private deliveryStartedAt = 0;
-  private deliverySkipCount = 0;
+  private polling = false;
+  private pending: {data: FeedResponse; plan: HeartbeatPlan; attempts: number} | null = null;
   private activeDelivery: Promise<void> | null = null;
 
   constructor(config: FeedPollerConfig) {
@@ -92,14 +101,10 @@ export class FeedPoller {
       this.timeoutId = null;
     }
 
-    // Wait for in-flight delivery to complete
+    // Wait for the in-flight delivery attempt; it settles within the delivery timeout.
     if (this.activeDelivery) {
-      log('[eigenflux:feed] Waiting for in-flight delivery to complete before stop');
-      try {
-        await this.activeDelivery;
-      } catch {
-        // Swallow — we're stopping anyway
-      }
+      log('[eigenflux:feed] Waiting for in-flight delivery attempt before stop');
+      await this.activeDelivery;
     }
   }
 
@@ -123,116 +128,103 @@ export class FeedPoller {
     }, intervalSec * 1000);
   }
 
-  async pollOnce(): Promise<FeedResponse | null> {
+  private async skipped(): Promise<null> {
+    try { await this.config.onPollSkipped?.(); } catch (error) { log('[eigenflux:feed] maintenance failed:', error); }
+    return null;
+  }
+
+  private async deliverPending(): Promise<void> {
+    const pending = this.pending;
+    if (!pending || this.deliveryInFlight) return;
+    this.deliveryInFlight = true;
+    pending.attempts++;
+    const timeoutMs = this.config.deliveryTimeoutMs ?? FEED_DELIVERY_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const delivery = Promise.race([
+      Promise.resolve().then(() => this.config.onFeedUpdate(pending.data, pending.plan)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`delivery timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    this.activeDelivery = delivery.then(() => {}, () => {});
     try {
-      let heartbeatPlan: HeartbeatPlan | null = null;
-      if (this.config.onHeartbeatStart) {
-        try {
-          heartbeatPlan = await this.config.onHeartbeatStart();
-        } catch (error) {
-          log(
-            `[eigenflux:feed] onHeartbeatStart hook error: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
+      await delivery;
+      this.pending = null;
+    } catch (error) {
+      log(`[eigenflux:feed] Delivery attempt ${pending.attempts}/${MAX_DELIVERY_ATTEMPTS} failed: ${String(error)}`);
+      if (pending.attempts >= MAX_DELIVERY_ATTEMPTS) {
+        log(`[eigenflux:feed] ERROR dropping payload after ${MAX_DELIVERY_ATTEMPTS} failed deliveries`);
+        this.pending = null;
       }
+    } finally {
+      this.deliveryInFlight = false;
+      this.activeDelivery = null;
+    }
+  }
 
-      log(`[eigenflux:feed] Polling via CLI for server=${this.config.serverName}`);
-
-      const result = await (this.config.exec ?? execEigenflux)<FeedResponse['data']>(
+  async pollOnce(): Promise<FeedResponse | null> {
+    if (this.polling || this.deliveryInFlight) return this.skipped();
+    this.polling = true;
+    try {
+      if (this.pending) {
+        const data = this.pending.data;
+        await this.deliverPending();
+        await this.skipped();
+        return data;
+      }
+      let started: HeartbeatStartResult = null;
+      try { started = await this.config.onHeartbeatStart?.() ?? null; }
+      catch (error) { log('[eigenflux:feed] heartbeat plan unavailable:', error); }
+      if (started && 'kind' in started && started.kind === 'auth_required') {
+        await this.config.onAuthRequired(started.stderr);
+        return null;
+      }
+      if (started && 'kind' in started && started.kind === 'auth_unavailable') {
+        log(`[eigenflux:feed] Credential acquisition unavailable; cycle stopped: ${started.stderr}`);
+        return null;
+      }
+      if (started && 'kind' in started && started.kind === 'not_installed') {
+        await this.config.onCliMissing?.();
+        return this.skipped();
+      }
+      const plan = started && 'agent_prompt' in started ? started : null;
+      if (!plan) {
+        log('[eigenflux:feed] Skipping poll: current heartbeat plan unavailable');
+        return this.skipped();
+      }
+      // Re-read every cycle so a CLI upgrade or downgrade changes the argv on the next pull.
+      const exec = this.config.exec ?? execEigenflux;
+      const cliVersion = await getInstalledCliVersion(this.config.eigenfluxBin, exec);
+      const origin = supportsHeartbeatOrigin(cliVersion) ? ['--origin', 'heartbeat'] : [];
+      const result = await exec<FeedResponse['data']>(
         this.config.eigenfluxBin,
-        ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json']
+        ['feed', 'poll', '--limit', '20', '--action', 'refresh', '-s', this.config.serverName, '-f', 'json', ...(supportsFeedBatches(cliVersion) ? ['--batch', '5'] : []), ...origin]
       );
-
       if (result.kind === 'not_installed') {
-        log(`[eigenflux:feed] CLI not installed (bin=${result.bin})`);
-        if (this.config.onCliMissing) {
-          try {
-            await this.config.onCliMissing();
-          } catch (err) {
-            log(`[eigenflux:feed] onCliMissing hook error: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
+        await this.config.onCliMissing?.();
         return null;
       }
-
       if (result.kind === 'auth_required') {
-        log('[eigenflux:feed] Auth required');
-        if (!this.authPrompted) {
-          await this.config.onAuthRequired(result.stderr);
-          this.authPrompted = true;
-        }
+        await this.config.onAuthRequired(result.stderr);
         return null;
       }
-
       if (result.kind === 'error') {
         log(`[eigenflux:feed] CLI error: ${result.error.message}`);
         return null;
       }
-
-      // Reconstruct full FeedResponse envelope from CLI data output
-      const data: FeedResponse = {
-        code: 0,
-        msg: 'success',
-        data: result.data,
-      };
-
-      // Reset the auth prompt on success (auth restored); the CLI-missing
-      // episode gate lives in the channel layer and is reset via onPollSuccess.
-      this.authPrompted = false;
-
-      const items = data.data.items ?? [];
-      const notifications = data.data.notifications ?? [];
-      log(
-        `[eigenflux:feed] Polled: ${items.length} items, ${notifications.length} notifications, has_more=${data.data.has_more}`
-      );
-
-      // Piggy-back per-poll best-effort tasks (settings push, feedback flush).
-      if (this.config.onPollSuccess) {
-        try {
-          await this.config.onPollSuccess();
-        } catch (err) {
-          log(`[eigenflux:feed] onPollSuccess hook error: ${err instanceof Error ? err.message : String(err)}`);
-        }
+      const data: FeedResponse = {code: 0, msg: 'success', data: result.data};
+      try { await this.config.onPollSuccess?.(); }
+      catch (error) { log('[eigenflux:feed] onPollSuccess hook error:', error); }
+      if (plan.wake_on_empty || (data.data.items?.length ?? 0) > 0 || (data.data.notifications?.length ?? 0) > 0) {
+        this.pending = {data, plan, attempts: 0};
+        await this.deliverPending();
       }
-
-      if (heartbeatPlan?.wake_on_empty || items.length > 0 || notifications.length > 0) {
-        // Check for stale delivery flag (delivery promise hung)
-        if (this.deliveryInFlight && this.deliveryStartedAt > 0) {
-          const elapsed = Date.now() - this.deliveryStartedAt;
-          if (elapsed > DELIVERY_TIMEOUT_MS) {
-            log(`[eigenflux:feed] Delivery flag stuck for ${Math.round(elapsed / 1000)}s, force-resetting`);
-            this.deliveryInFlight = false;
-            this.activeDelivery = null;
-          }
-        }
-
-        if (this.deliveryInFlight) {
-          this.deliverySkipCount += 1;
-          const elapsed = Date.now() - this.deliveryStartedAt;
-          log(
-            `[eigenflux:feed] Skipping feed delivery: previous delivery still in progress ` +
-            `(elapsed=${Math.round(elapsed / 1000)}s, skipped_items=${items.length}, ` +
-            `skipped_notifications=${notifications.length}, total_skips=${this.deliverySkipCount})`
-          );
-        } else {
-          this.deliveryInFlight = true;
-          const startedAt = Date.now();
-          this.deliveryStartedAt = startedAt;
-          const delivery = this.config.onFeedUpdate(data, heartbeatPlan).finally(() => {
-            const duration = Date.now() - startedAt;
-            log(`[eigenflux:feed] Delivery completed in ${Math.round(duration / 1000)}s`);
-            this.deliveryInFlight = false;
-            this.activeDelivery = null;
-          });
-          this.activeDelivery = delivery;
-          await delivery;
-        }
-      }
-
       return data;
     } catch (error) {
       log('[eigenflux:feed] Poll failed:', error instanceof Error ? error.message : error);
       return null;
+    } finally {
+      this.polling = false;
     }
   }
 }
