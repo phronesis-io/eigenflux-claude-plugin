@@ -56,7 +56,7 @@ mock.module('@modelcontextprotocol/sdk/server/index.js', () => ({
 }));
 mock.module('@modelcontextprotocol/sdk/server/stdio.js', () => ({ StdioServerTransport: class {} }));
 mock.module('../src/instance-leader.js', () => ({
-  detectLeaderPriority: () => 0,
+  detectLeaderPriority: () => 2, PRIORITY_DEV_CHANNEL: 2,
   LeaderElector: class {
     constructor(config) { this.config = config; }
     start() { this.config.onAcquire(); }
@@ -67,7 +67,7 @@ mock.module('../src/pm-stream.js', () => ({
   PmStreamClient: class { constructor(config) { pmConfig = config; } start() {} stop() {} },
 }));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
-mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.6.7', isCliOutdated: () => false }));
+mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.6.7', supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
 const { FeedPoller } = await import('../src/feed-poller.ts');
 mock.module('../src/feed-poller.js', () => ({
   FeedPoller: class extends FeedPoller {
@@ -126,7 +126,12 @@ try {
   }
   planResult = { kind: 'future_status' };
   await poller.pollOnce();
-  assert.equal(feedCalls, 3, 'ordinary endpoint failures and unknown statuses retain compatible fallback');
+  assert.equal(feedCalls, 0, 'unavailable plans must never consume Feed');
+  await pmConfig.onAuthRequired(detail);
+  assert.equal(events.length, 4, 'a skipped Feed cannot reset the shared cooldown');
+  planResult = { kind: 'success', data: { agent_prompt: 'CURRENT PLAN', wake_on_empty: false } };
+  await poller.pollOnce();
+  assert.equal(feedCalls, 1);
   await pmConfig.onAuthRequired(detail);
   assert.equal(events.length, 5, 'a successful Feed check resets the shared cooldown');
   console.log('channel authentication wiring regression passed');

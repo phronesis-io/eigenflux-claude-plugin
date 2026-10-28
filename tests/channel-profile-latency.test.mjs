@@ -40,7 +40,7 @@ mock.module('@modelcontextprotocol/sdk/server/index.js', () => ({
 }));
 mock.module('@modelcontextprotocol/sdk/server/stdio.js', () => ({ StdioServerTransport: class {} }));
 mock.module('../src/instance-leader.js', () => ({
-  detectLeaderPriority: () => 0,
+  detectLeaderPriority: () => 2, PRIORITY_DEV_CHANNEL: 2,
   LeaderElector: class {
     constructor(config) { this.config = config; }
     start() { this.config.onAcquire(); }
@@ -49,7 +49,7 @@ mock.module('../src/instance-leader.js', () => ({
 }));
 mock.module('../src/pm-stream.js', () => ({ PmStreamClient: class { start() {} stop() {} } }));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
-mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', isCliOutdated: () => false }));
+mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
 mock.module('../src/heartbeat-plan-runner.js', () => ({
   HeartbeatPlanRunner: class { async run() { return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
 }));
