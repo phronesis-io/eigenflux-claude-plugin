@@ -49,7 +49,7 @@ mock.module('../src/instance-leader.js', () => ({
 }));
 mock.module('../src/pm-stream.js', () => ({ PmStreamClient: class { start() {} stop() {} } }));
 mock.module('../src/feedback-flush-loop.js', () => ({ FeedbackFlushLoop: class { start() {} stop() {} kick() {} } }));
-mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
+mock.module('../src/cli-version.js', () => ({ getInstalledCliVersion: async () => '0.0.46', supportsFeedBatches: () => false, supportsHeartbeatOrigin: () => false, isCliOutdated: () => false }));
 mock.module('../src/heartbeat-plan-runner.js', () => ({
   HeartbeatPlanRunner: class { async run() { return { agent_prompt: 'CURRENT CENTRAL PLAN', wake_on_empty: false }; } },
 }));

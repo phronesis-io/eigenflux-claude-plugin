@@ -38,7 +38,7 @@ if (!priority) {
   mock.module('../src/pm-stream.js', () => ({PmStreamClient:class {start(){pmStarts++;} stop(){}}}));
   mock.module('../src/profile-refresher.js', () => ({ProfileRefresher:class {start(){} stop(){} async refresh(){}}}));
   mock.module('../src/feedback-flush-loop.js', () => ({FeedbackFlushLoop:class {start(){} stop(){} kick(){}}}));
-  mock.module('../src/cli-version.js', () => ({getInstalledCliVersion:async()=>'0.7.0',supportsHeartbeatOrigin:()=>true,isCliOutdated:()=>false}));
+  mock.module('../src/cli-version.js', () => ({getInstalledCliVersion:async()=>'0.7.0',supportsFeedBatches: () => false, supportsHeartbeatOrigin:()=>true,isCliOutdated:()=>false}));
   mock.module('../src/heartbeat-plan-runner.js', () => ({HeartbeatPlanRunner:class {async run(){return {agent_prompt:'CURRENT PLAN',wake_on_empty:false};}}}));
   await import('../src/channel.ts');
   // channel.ts installs an uncaughtException logger, so failures must set the exit code explicitly.

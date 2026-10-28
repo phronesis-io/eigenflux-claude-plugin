@@ -117,3 +117,8 @@ with an error log after the second failure. CLI 0.7.0 or newer receives
 The installed version is re-read every cycle, so upgrades and downgrades apply
 to the next pull. Older CLIs remain supported; the outdated-CLI notice uses the
 plugin's minimum CLI version (0.6.7).
+
+Feed batching is enabled with `--batch 5` only for CLI 0.7.1 or newer. The CLI
+saves pages and serves local batches; the Agent continues with `feed next` as
+the current Skill directs. Older or unreadable CLI versions keep whole-page
+pulls. Delivery, plan and capacity gates are unchanged.
